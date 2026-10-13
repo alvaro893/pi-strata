@@ -1,9 +1,9 @@
 import { spawn } from "node:child_process";
 import type { ModelCost } from "@earendil-works/pi-ai";
-import type { ProviderModelConfig } from "@earendil-works/pi-coding-agent";
-import { StrataClient, type StrataErrorKind } from "./client.ts";
+import { StrataClient, normalizeRoot, type StrataErrorKind } from "./client.ts";
 import {
   DEFAULT_MAX_TOKENS,
+  DEFAULT_URL,
   FALLBACK_CTX,
   POLL_INTERVAL,
   PROVIDER_NAME,
@@ -14,14 +14,12 @@ import type {
   StrataConfigView,
   StrataHealth,
   StrataModelsResponse,
+  StrataPiModel,
   StrataProps,
   StrataServerConfig,
   StrataStatusKind,
   StrataV1Status,
 } from "./types.ts";
-
-/** The chat member of Pi's provider-model union (the one a Strata model fills). */
-type ChatModelConfig = Extract<ProviderModelConfig, { type?: "chat" }>;
 
 /** One model a Strata server serves (an alias is a model too: Strata answers to it). */
 export interface StrataModel {
@@ -49,7 +47,7 @@ interface Probe {
  * provider here, exactly like the llama.cpp extension does per router.
  */
 export class StrataServer {
-  readonly client: StrataClient;
+  client: StrataClient;
   readonly providerId: string;
   readonly providerName: string;
 
@@ -65,13 +63,37 @@ export class StrataServer {
     apiKey: string,
     readonly settings: StrataSettingsManager,
   ) {
-    this.client = new StrataClient(config.url, apiKey);
+    this.client = new StrataClient(config.url || DEFAULT_URL, apiKey);
     this.providerId = StrataSettingsManager.providerId(config.url, config.id);
-    this.providerName = `${PROVIDER_NAME} (${config.name ?? config.url})`;
+    const label = config.name ?? config.url;
+    this.providerName = label ? `${PROVIDER_NAME} (${label})` : PROVIDER_NAME;
   }
 
   get url(): string {
-    return this.config.url;
+    return this.client.root;
+  }
+
+  /**
+   * Follow a credential to another address, because the user typed a different
+   * URL at `/login`. The cached snapshot belongs to the old address.
+   */
+  useUrl(url: string): void {
+    const root = normalizeRoot(url);
+    if (!root || root === this.client.root) return;
+    this.client = new StrataClient(root, this.client.apiKey);
+    this.snapshot = {};
+    this.failures.clear();
+  }
+
+  /** Use the key that `/login` stored. */
+  useApiKey(key: string): void {
+    if (!key || key === this.client.apiKey) return;
+    this.client = new StrataClient(this.client.root, key);
+  }
+
+  /** The Pi catalog for this server (empty while nothing can be read). */
+  piModels(): StrataPiModel[] {
+    return this.models.map((model) => this.toPiModel(model));
   }
 
   /** Refresh the cached probe; never throws - the outcome is read through the status helpers. */
@@ -346,8 +368,8 @@ export class StrataServer {
     return lines.join("\n");
   }
 
-  /** The Pi model configuration for one Strata model. */
-  toProviderConfig(model: StrataModel): ChatModelConfig {
+  /** The Pi catalog entry for one Strata model. */
+  toPiModel(model: StrataModel): StrataPiModel {
     const override = this.overrideFor(model) ?? {};
     const cost: ModelCost = {
       input: override.cost?.input ?? 0,
@@ -359,6 +381,9 @@ export class StrataServer {
     return {
       id: model.id,
       name: model.name,
+      api: "openai-completions",
+      provider: this.providerId,
+      baseUrl: this.client.apiBaseUrl,
       reasoning: this.reasoning(model),
       // Strata knows none/low/medium/high; Pi's wider scale is clamped to it.
       thinkingLevelMap: { ...THINKING_LEVEL_MAP },
@@ -382,7 +407,7 @@ export class StrataServer {
         maxTokensField: "max_tokens",
         thinkingFormat: "openai",
         ...override.compat,
-      } as ChatModelConfig["compat"],
+      } as StrataPiModel["compat"],
     };
   }
 }

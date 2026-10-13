@@ -12,8 +12,8 @@ import { normalizeRoot } from "./client.ts";
 import {
   API_KEY_PLACEHOLDER,
   AUTOLOAD_ON_MESSAGE,
-  DEFAULT_URL,
   LOAD_TIMEOUT,
+  PRIMARY_PROVIDER_ID,
   PROVIDER_PREFIX,
   REACT_TO_MODEL_SELECT,
   SERVER_TIMEOUT,
@@ -131,7 +131,8 @@ export class StrataSettingsManager {
 
   /** The provider ID of a server: its `id`, else `strata-server=<url>`. */
   static providerId(url: string, customId?: string): string {
-    return customId ?? `${PROVIDER_PREFIX}=${url}`;
+    if (customId) return customId;
+    return url ? `${PROVIDER_PREFIX}=${url}` : PRIMARY_PROVIDER_ID;
   }
 
   /**
@@ -174,7 +175,9 @@ export class StrataSettingsManager {
       }
       urls.push(url);
     }
-    return urls.length > 0 ? urls : [DEFAULT_URL];
+    // No implicit default: an unconfigured extension registers one provider
+    // with no address instead, so /login can ask for it.
+    return urls;
   }
 
   /**

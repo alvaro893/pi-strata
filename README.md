@@ -31,11 +31,21 @@ pi install npm:pi-strata                          # once it is on npm
 
 Requires Pi 1.1.0 or newer: verified against Pi 1.1.0 and 1.2.0 with Strata 0.1.43.1.
 
-Then point Pi at your server (any of these; first match wins):
+Then connect it to your server: run `/login`, choose **Strata**, and answer two
+prompts - the server URL and its API key:
 
-```bash
-export STRATA_SERVER_URL=http://127.0.0.1:8080
+```text
+/login
+  Strata server URL: http://127.0.0.1:8080
+  API key (leave empty for a server started without one): ****
 ```
+
+The extension checks the pair against the server before storing it, and keeps
+both in one credential (`strata-server` in `auth.json`), so there is no
+environment variable to set.
+
+Prefer configuration files, or run several servers? Both work, and `/strata
+servers` writes this for you:
 
 ```jsonc
 // .pi/settings.json (project) or ~/.pi/agent/settings.json (global)
@@ -48,21 +58,29 @@ export STRATA_SERVER_URL=http://127.0.0.1:8080
 }
 ```
 
-With nothing configured it tries `http://127.0.0.1:8080`.
+```bash
+export STRATA_SERVER_URL=http://127.0.0.1:8080   # one or more, ';' separated
+export STRATA_API_KEY=...                        # optional
+```
+
+A configured address is used as it is written; `/login` supplies the key (and
+the address, when nothing else gives one).
 
 ## API key
 
-Strata answers every request when it runs without an `api_key`, and then no key
-setup is needed. If `/strata status` says the server needs one, the key is taken
-from the first of:
+Strata answers every request when it runs without an `api_key`, and then the
+`/login` key prompt can be left empty. Otherwise the key comes from the first of:
 
-1. `auth.json` under the server's `id`, then under `strata-server=<url>`
+1. what `/login` stored (`auth.json`, provider id `strata-server` or your own `id`)
 2. `STRATA_API_KEY`
-3. a `models.json` provider pointed at the same address - so a hand-written
-   provider for this server keeps working unchanged
+3. the `apiKey` of a `models.json` provider pointed at the same address - so a
+   hand-written provider for this server keeps working unchanged
 
-`/login` → **Strata (<url>)** writes option 1 for you. Key values support Pi's
-usual forms: a literal, `$ENV_VAR` / `${ENV_VAR}`, or `!command` to fetch it.
+Key values support Pi's usual forms: a literal, `$ENV_VAR` / `${ENV_VAR}`, or
+`!command` to fetch it.
+
+`/login` asks for the URL first, so it also works as the only configuration: the
+address travels inside the credential.
 
 ## Commands
 
@@ -72,7 +90,7 @@ usual forms: a literal, `$ENV_VAR` / `${ENV_VAR}`, or `!command` to fetch it.
 | `/strata load` | Load the model Pi is on right now |
 | `/strata unload` | Unload it and free the VRAM |
 | `/strata status` | Reachability, model, context, engine, VRAM, timings per server |
-| `/strata servers` | Add, edit, remove servers |
+| `/strata servers` | Add, edit, remove servers (then `/login` for its key) |
 | `/strata settings` | This extension's behaviour |
 | `/strata config` | Edit Strata's run config through the server's own Settings endpoint |
 | `/strata refresh` | Probe again and re-register the models |
@@ -157,6 +175,10 @@ so offering the whole window for one answer only invites runaways.
 | `GET /props` | sleeping state, autoload capability, build info |
 | `POST /load`, `POST /unload` | take the model, or give the memory back (both need minutes, not milliseconds) |
 | `GET /config`, `POST /config` | Strata's Settings view of the run config |
+
+The models Pi knows come from a probe at extension load plus Pi's own catalog
+refresh (which happens in interactive sessions, or with `pi update models`), so
+a model appears in `/model` as soon as a server answers.
 
 Two Strata details the extension handles:
 

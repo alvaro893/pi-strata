@@ -1,8 +1,16 @@
 /**
  * Provider ID prefix. A server without an explicit `id` is addressed as
- * `strata-server=<url>`, which is also the key it expects in auth.json.
+ * `strata-server=<url>`, which is also the address the catalog and the stored
+ * credential travel under.
  */
 export const PROVIDER_PREFIX = "strata-server";
+
+/**
+ * Provider ID of the entry that is always registered, even with nothing
+ * configured: it is what `/login` fills in with a URL and an API key. With no
+ * configuration at all it has no address and reports itself as unconfigured.
+ */
+export const PRIMARY_PROVIDER_ID = PROVIDER_PREFIX;
 
 /** Settings key read from `.pi/settings.json` (project) and `~/.pi/agent/settings.json` (global). */
 export const SETTINGS_KEY = "strataSettings";

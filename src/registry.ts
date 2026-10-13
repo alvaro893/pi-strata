@@ -1,5 +1,7 @@
-import type { ExtensionAPI, ProviderModelConfig } from "@earendil-works/pi-coding-agent";
-import { API_TYPE } from "./constants.ts";
+import type { ApiKeyCredential } from "@earendil-works/pi-ai";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { readStoredCredential } from "@earendil-works/pi-coding-agent";
+import { createStrataProvider, credentialUrl } from "./provider.ts";
 import { StrataSettingsManager } from "./settings.ts";
 import { type StrataModel, StrataServer } from "./server.ts";
 import type { StrataServerConfig } from "./types.ts";
@@ -11,10 +13,12 @@ export interface LocatedModel {
 }
 
 /**
- * The Strata servers Pi is connected to, kept in sync with Pi's provider
- * registry. Each server is one provider, so Pi's own model picker shows
- * `Strata (<url>) / <model>` per server, exactly like the llama.cpp extension
- * does per llama.cpp server.
+ * The Strata servers Pi is connected to.
+ *
+ * Every server is registered as its own **native** Pi provider, which is what
+ * lets `/login` ask for its URL and API key (see `createStrataProvider`). With
+ * nothing configured the extension still registers one empty provider, so
+ * `/login` has an entry to fill in: no environment variable is required.
  */
 export class StrataRegistry {
   private servers = new Map<string, StrataServer>();
@@ -49,20 +53,25 @@ export class StrataRegistry {
   }
 
   /**
-   * Re-read the configuration, probe every server and register the providers.
+   * Re-read the configuration, probe every server and (re)register the providers.
    *
    * @returns Warnings worth showing to the user
    */
   async update(pi: ExtensionAPI): Promise<string[]> {
     const warnings = [...this.settings.takeWarnings()];
     const timeout = await this.settings.resolveServerTimeout();
-    const configs = await this.settings.resolveServers();
+    const configured = await this.settings.resolveServers();
+    // With nothing configured anywhere, register one provider with no address:
+    // that is the entry `/login` asks a URL and a key for.
+    const configs = configured.length > 0 ? configured : [{ url: "" }];
 
-    // Reuse the existing object per URL: a load in flight keeps its state.
+    // Reuse the existing object per address: a load in flight keeps its state,
+    // and a credential that moved a server keeps its new address.
     const next = new Map<string, StrataServer>();
     for (const config of configs) {
-      if (next.has(config.url)) continue; // duplicate URL: one provider per address
-      const existing = this.servers.get(config.url);
+      const key = config.url || "";
+      if (next.has(key)) continue; // one provider per address
+      const existing = key ? this.servers.get(key) : undefined;
       const server =
         existing && sameConfig(existing.config, config)
           ? existing
@@ -71,15 +80,28 @@ export class StrataRegistry {
               this.settings.resolveApiKey(config.url, config.id),
               this.settings,
             );
-      next.set(config.url, server);
+      next.set(key, server);
     }
     this.servers = next;
 
-    await Promise.all([...this.servers.values()].map((server) => server.refresh(timeout)));
+    await Promise.all(
+      [...this.servers.values()].map(async (server) => {
+        // What `/login` stored is a source of truth the configuration may not
+        // know about: it holds both the address and the key. Reading it here is
+        // what lets a logged-in server be up to date in a non-interactive run.
+        const credential = readStoredCredential(server.providerId) as ApiKeyCredential | undefined;
+        const url = credentialUrl(credential) ?? server.config.url;
+        if (url) server.useUrl(url);
+        server.useApiKey(
+          credential?.key ?? (url ? this.settings.resolveApiKey(url, server.config.id) : ""),
+        );
 
-    for (const server of this.servers.values()) {
-      this.register(pi, server, warnings);
-    }
+        // Probe before registering: the provider is seeded with what the probe
+        // found, so the models exist before Pi's first catalog snapshot.
+        if (url) await server.refresh(timeout);
+        this.register(pi, server, warnings);
+      }),
+    );
 
     // Forget providers whose server disappeared from the configuration.
     for (const id of [...this.registered]) {
@@ -90,50 +112,22 @@ export class StrataRegistry {
     }
 
     for (const server of this.servers.values()) {
-      // An unauthorized server is reported by register() with the /login hint.
       const error = server.probeError;
+      // An unauthorized server is reported by register() with the /login hint.
       if (error && error.kind !== "unauthorized") warnings.push(error.message);
     }
     return warnings;
   }
 
-  /**
-   * Register one server as a Pi provider.
-   *
-   * A server that needs a key is registered with an empty model list on
-   * purpose: the provider then shows up in `/login`, which is where the user
-   * can supply it. An unreachable server is not registered at all.
-   */
+  /** Register one server as a native Pi provider. */
   register(pi: ExtensionAPI, server: StrataServer, warnings: string[] = []): void {
-    const error = server.probeError;
-    const models: ProviderModelConfig[] = server.models.map((model) => server.toProviderConfig(model));
-
-    if (error && error.kind !== "unauthorized") {
-      if (this.registered.has(server.providerId)) {
-        pi.unregisterProvider(server.providerId);
-        this.registered.delete(server.providerId);
-      }
-      return;
-    }
-
-    if (error?.kind === "unauthorized")
+    if (server.probeError?.kind === "unauthorized" && server.config.url)
       warnings.push(
-        `${server.url} needs an API key: run /login and choose ${server.providerName}, ` +
-          "or store the key in auth.json under this extension's provider id",
+        `${server.url} refused the API key (or has none): ` +
+          `run /login, choose ${server.providerName}, and enter the key it expects`,
       );
 
-    pi.registerProvider(server.providerId, {
-      name: server.providerName,
-      baseUrl: server.client.apiBaseUrl,
-      api: API_TYPE,
-      apiKey: this.settings.resolveApiKey(server.url, server.config.id),
-      models,
-      // Ask the server again instead of showing a stale model list.
-      refreshModels: async () => {
-        await server.refresh(5000);
-        return server.models.map((model) => server.toProviderConfig(model));
-      },
-    });
+    pi.registerProvider(createStrataProvider(server, (url) => this.settings.resolveApiKey(url)));
     this.registered.add(server.providerId);
   }
 

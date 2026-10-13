@@ -1,7 +1,7 @@
 {
   "name": "pi-strata",
-  "version": "0.1.0",
-  "description": "Pi extension for Strata: browse the model a Strata server serves, load it, unload it, and see its state from the command palette.",
+  "version": "0.2.0",
+  "description": "Pi extension for Strata: connect to a Strata server with /login (URL and API key), browse its model, load and unload it.",
   "keywords": [
     "pi",
     "pi-package",

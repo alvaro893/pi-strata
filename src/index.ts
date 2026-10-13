@@ -76,6 +76,12 @@ export default async function (pi: ExtensionAPI) {
 
     const located = registry.getServerForModel(event.model.id);
     if (!located) return;
+
+    // Look again before deciding: the model may have been unloaded by another
+    // client, by Strata's own idle timer, or from its page, and a stale
+    // "loaded" would skip the load the selection asked for.
+    await located.server.refresh(await settings.resolveServerTimeout());
+
     const kind = located.server.statusOf(located.model);
     if (kind === "loaded" || kind === "sleeping" || kind === "loading") return;
 

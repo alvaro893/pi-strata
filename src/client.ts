@@ -52,7 +52,7 @@ export function normalizeRoot(url: string): string {
 export class StrataClient {
   constructor(
     readonly root: string,
-    private readonly apiKey: string,
+    readonly apiKey: string,
   ) {}
 
   /** Base URL of the OpenAI-compatible API registered with Pi. */

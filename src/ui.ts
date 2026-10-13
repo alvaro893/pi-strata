@@ -9,6 +9,13 @@ import type { StrataSettingsManager } from "./settings.ts";
 import type { StrataConfigKey, StrataSettings, StrataServerConfig } from "./types.ts";
 
 const REFRESH = "🔄 Refresh";
+
+/** How a server is named in menus; the unconfigured entry says what to do. */
+function serverLabel(server: StrataServer): string {
+  if (server.config.name) return server.config.name;
+  if (server.config.url) return server.config.url;
+  return "(not configured - use /login)";
+}
 const STATUS = "📊 Status";
 const SERVERS = "🖥  Servers…";
 const SETTINGS = "⚙  Settings…";
@@ -25,7 +32,7 @@ export function formatModelLabel(
   const parts = [
     `${Math.round(ctx / 1024)}K`,
     server.capabilities(model).includes("image") ? "vision" : "text",
-    showServerUrls ? (server.config.name ?? server.url) : "",
+    showServerUrls ? serverLabel(server) : "",
   ].filter(Boolean);
   return `${ICONS[server.statusOf(model)]} ${model.id}${model.aliasOf ? ` → ${model.aliasOf}` : ""} (${parts.join(", ")})`;
 }
@@ -44,6 +51,14 @@ export async function browseModels(
 
   for (;;) {
     const located = registry.getAllModels();
+    if (located.length === 0 && !(await settings.resolveServers()).some((server) => server.url)) {
+      ctx.ui.notify(
+        "No Strata server is configured yet:\n" +
+          "run /login, choose Strata, and enter the server URL (and its API key if it has one).",
+        "info",
+      );
+      return;
+    }
     const labels = located.map(({ server, model }) => formatModelLabel(server, model, showServerUrls));
     const choice = await ctx.ui.select(
       "Strata models (green = loaded, blue = wakes on use, grey = unloaded)",
@@ -261,6 +276,12 @@ export async function manageServers(
         ),
       );
       await refresh(pi, ctx, registry);
+      ctx.ui.notify(
+        `${url} added.\n` +
+          "If it requires an API key, run /login, choose its Strata entry and enter the key there " +
+          "(one /login stores both the URL and the key).",
+        "info",
+      );
       continue;
     }
 
@@ -387,7 +408,7 @@ export async function editRunConfig(
     return;
   }
 
-  const labels = servers.map((server) => server.config.name ?? server.url);
+  const labels = servers.map(serverLabel);
   const pickedLabel = await ctx.ui.select("Configure which server?", labels);
   if (!pickedLabel) return;
   const server = servers[labels.indexOf(pickedLabel)];

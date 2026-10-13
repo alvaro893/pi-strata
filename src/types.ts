@@ -1,3 +1,8 @@
+import type { Model } from "@earendil-works/pi-ai";
+
+/** A Strata model as Pi's catalog sees it (OpenAI-completions wire protocol). */
+export type StrataPiModel = Model<"openai-completions">;
+
 /** Shape of one entry in `strataSettings.servers`. */
 export interface StrataServerConfig {
   /** Root of the Strata server, e.g. `http://127.0.0.1:8080` (no `/v1`). */
