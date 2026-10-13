@@ -125,7 +125,7 @@ export function startFakeStrata(options = {}) {
           vram: { elastic: false },
           machine: {
             at: Math.round(Date.now() / 1000),
-            gpu: { name: "Tesla V100-PCIE-32GB", used_mib: 32534, total_mib: 32768, util_pct: 0, temp_c: 55 },
+            gpu: { name: "Test GPU", used_mib: 32534, total_mib: 32768, util_pct: 0, temp_c: 55 },
             ram: { used_gib: 63.5, total_gib: 74.3 },
           },
         });

@@ -141,7 +141,7 @@ try {
   assert.deepEqual(openServer.capabilities(openServer.models[0]), ["text", "image"], "vision detected");
   assert.equal(openServer.toProviderConfig(openServer.models[0]).maxTokens, 32768, "maxTokens is capped by default");
   const summary = openServer.describe();
-  assert.match(summary, /32,534 \/ 32,768 MiB used \(Tesla V100-PCIE-32GB\)/, "the GPU figures are shown");
+  assert.match(summary, /32,534 \/ 32,768 MiB used \(Test GPU\)/, "the GPU figures are shown");
   assert.match(summary, /decode 44\.4 tok\/s/, "and the last turn's decode rate");
   assert.match(summary, /draft 435\/679 accepted/, "and the draft acceptance");
   assert.equal(
