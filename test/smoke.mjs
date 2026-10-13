@@ -256,16 +256,26 @@ try {
     "a bad key fails the login instead of being stored",
   );
 
-  // An unreachable URL is rejected too, with the address in the message.
+  // An unreachable address is rejected too, naming it and the reason.
   await assert.rejects(
     () => keyedProvider.auth.apiKey.login({
       signal: new AbortController().signal,
-      prompt: async (prompt) => (prompt.type === "text" ? "http://127.0.0.1:9" : ""),
+      prompt: async (prompt) => (prompt.type === "text" ? "127.0.0.1:45999" : ""),
       notify: () => undefined,
     }),
-    /did not answer/,
-    "an unreachable URL is refused",
+    /cannot reach http:\/\/127\.0\.0\.1:45999/,
+    "an unreachable address is refused, scheme or no scheme",
   );
+
+  // The address as it is read off a machine running Strata - no scheme - is the
+  // shape people type, and what used to fail with "Failed to parse URL".
+  const schemeLess = await keyedProvider.auth.apiKey.login({
+    signal: new AbortController().signal,
+    prompt: async (prompt) => (prompt.type === "text" ? keyed.url.replace(/^https?:\/\//, "") : "secret"),
+    notify: () => undefined,
+  });
+  assert.equal(schemeLess.env.STRATA_SERVER_URL, keyed.url, "a bare host:port is accepted and completed");
+  assert.equal(schemeLess.key, "secret", "and the key is stored with it");
 
   // resolve() reports the connection it would use, and nothing when unset.
   const loggedIn = await keyedProvider.auth.apiKey.resolve({

@@ -3,6 +3,7 @@ import type {
   ExtensionCommandContext,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import { parseServerUrl } from "./client.ts";
 import { ICONS, type StrataModel, type StrataServer } from "./server.ts";
 import type { StrataRegistry } from "./registry.ts";
 import type { StrataSettingsManager } from "./settings.ts";
@@ -337,14 +338,15 @@ async function pickServer(
 }
 
 async function promptUrl(ctx: ExtensionCommandContext, placeholder: string): Promise<string | undefined> {
-  const url = (await ctx.ui.input("Strata server URL", placeholder))?.trim().replace(/\/+$/, "");
-  if (!url) return undefined;
-  if (!/^https?:\/\//i.test(url)) {
-    ctx.ui.notify("The URL needs http:// or https://", "error");
+  const entered = (await ctx.ui.input("Strata server URL", placeholder))?.trim();
+  if (!entered) return undefined;
+  try {
+    // `host:port`, `http://host:port`, a pasted `<url>/v1`: all accepted.
+    return parseServerUrl(entered);
+  } catch (error) {
+    ctx.ui.notify((error as Error).message, "error");
     return undefined;
   }
-  // Accept a pasted `<url>/v1` and use its root.
-  return url.endsWith("/v1") ? url.slice(0, -"/v1".length) : url;
 }
 
 /** `/strata settings`: toggle the extension's own behaviour. */

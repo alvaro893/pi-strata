@@ -26,9 +26,46 @@ export class StrataError extends Error {
  *
  * @returns The server root (native endpoints like `/health` live directly under it)
  */
+/**
+ * Turn whatever someone typed into a server root.
+ *
+ * Handles the ways an address gets written in practice: a bare `host:port`
+ * (straight from a browser bar, with no scheme), `http://host:port`, a pasted
+ * `<url>/v1`, trailing slashes, and surrounding whitespace.
+ *
+ * @returns The root to use, or "" when there is nothing to work with
+ */
 export function normalizeRoot(url: string): string {
-  let root = url.trim().replace(/\/+$/, "");
+  let root = url.trim();
+  if (!root) return "";
+
+  // `192.168.0.62:8081` and `localhost:8080` are not valid URLs: fetch cannot
+  // parse them without a scheme, so assume plain HTTP.
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(root)) root = `http://${root}`;
+
+  root = root.replace(/\/+$/, "");
   if (root.endsWith("/v1")) root = root.slice(0, -"/v1".length);
+  return root;
+}
+
+/**
+ * Like {@link normalizeRoot}, but rejects input that is not a usable address,
+ * with a message worth showing the user.
+ */
+export function parseServerUrl(url: string, fallback = ""): string {
+  const root = normalizeRoot(url || fallback);
+  if (!root) return "";
+  try {
+    const parsed = new URL(root);
+    if (!parsed.hostname) throw new Error("no host");
+    // A Strata server speaks HTTP; anything else would only fail later.
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:")
+      throw new Error(`unsupported scheme ${parsed.protocol}`);
+  } catch {
+    throw new Error(
+      `'${url.trim()}' is not a server address - try something like http://192.168.0.62:8081`,
+    );
+  }
   return root;
 }
 
@@ -88,7 +125,9 @@ export class StrataClient {
       throw new StrataError(
         isTimeout
           ? `no answer from ${this.root}${path} within ${timeout} ms`
-          : `cannot reach ${this.root}: ${(error as Error).message}`,
+          : // The cause says why (ECONNREFUSED, DNS, TLS); the message alone is
+            // just "fetch failed", which tells the user nothing.
+            `cannot reach ${this.root}: ${causeOf(error) ?? (error as Error).message}`,
         isTimeout ? "timeout" : "unreachable",
       );
     }
@@ -193,8 +232,7 @@ export class StrataClient {
   }
 }
 
-function extractError(payload: unknown): string | undefined {
-  if (payload && typeof payload === "object") {
+function extractError(payload: unknown): string | undefined {  if (payload && typeof payload === "object") {
     const error = (payload as { error?: unknown }).error;
     if (typeof error === "string") return error;
     if (error && typeof error === "object") {
@@ -202,5 +240,14 @@ function extractError(payload: unknown): string | undefined {
       if (typeof message === "string") return message;
     }
   }
+  return undefined;
+}
+
+/** undici hides the real reason (ECONNREFUSED, DNS, TLS) in `cause`. */
+function causeOf(error: unknown): string | undefined {
+  const cause = (error as { cause?: unknown } | undefined)?.cause;
+  if (cause instanceof Error && cause.message) return cause.message;
+  if (cause && typeof cause === "object" && "code" in cause)
+    return String((cause as { code: unknown }).code);
   return undefined;
 }

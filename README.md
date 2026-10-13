@@ -40,9 +40,12 @@ prompts - the server URL and its API key:
 
 ```text
 /login
-  Strata server URL: http://127.0.0.1:8080
+  Strata server URL: 192.168.0.62:8081        (a bare host:port is fine)
   API key (leave empty for a server started without one): ****
 ```
+
+The address may be written `192.168.0.62:8081`, `http://192.168.0.62:8081`, or
+with a pasted `/v1` on the end; plain HTTP is assumed without a scheme.
 
 The extension checks the pair against the server before storing it, and keeps
 both in one credential (`strata-server` in `auth.json`), so there is no

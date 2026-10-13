@@ -8,7 +8,7 @@ import type {
   ProviderAuthInteraction,
 } from "@earendil-works/pi-ai";
 import { stream, streamSimple } from "@earendil-works/pi-ai/compat";
-import { StrataClient, normalizeRoot } from "./client.ts";
+import { StrataClient, normalizeRoot, parseServerUrl } from "./client.ts";
 import { API_KEY_PLACEHOLDER, DEFAULT_URL, PROVIDER_NAME } from "./constants.ts";
 import type { StrataServer } from "./server.ts";
 import type { StrataPiModel } from "./types.ts";
@@ -61,7 +61,12 @@ function strataAuth(server: StrataServer, apiKeyFallback: (url: string) => strin
           message: "Strata server URL",
           placeholder: known ?? process.env.STRATA_SERVER_URL ?? DEFAULT_URL,
         });
-        const url = normalizeRoot(entered.trim() || known || process.env.STRATA_SERVER_URL || DEFAULT_URL);
+        // Accepts a bare `host:port` too: that is how the address is usually
+        // read off the machine running Strata.
+        const url = parseServerUrl(
+          entered.trim(),
+          known || process.env.STRATA_SERVER_URL || DEFAULT_URL,
+        );
 
         const key = (
           await interaction.prompt({
@@ -75,7 +80,8 @@ function strataAuth(server: StrataServer, apiKeyFallback: (url: string) => strin
         // error now, not a failed request later.
         const client = new StrataClient(url, key || API_KEY_PLACEHOLDER);
         const health = await client.health(5000).catch((error: Error) => {
-          throw new Error(`${url} did not answer: ${error.message}`);
+          // Already names the address and the reason; just do not bury it.
+          throw new Error(error.message);
         });
         if (health.service && health.service !== "strata")
           throw new Error(`${url} answers, but it does not look like a Strata server`);

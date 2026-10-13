@@ -8,7 +8,7 @@ import {
   readStoredCredential,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import { normalizeRoot } from "./client.ts";
+import { normalizeRoot, parseServerUrl } from "./client.ts";
 import {
   API_KEY_PLACEHOLDER,
   AUTOLOAD_ON_MESSAGE,
@@ -157,23 +157,31 @@ export class StrataSettingsManager {
   private async resolveUrls(): Promise<string[]> {
     const fromEnv = (process.env.STRATA_SERVER_URL ?? "")
       .split(";")
-      .map((url) => url.trim().replace(/\/+$/, ""))
+      .map((url) => {
+        try {
+          return parseServerUrl(url);
+        } catch (error) {
+          this.warnings.push(`[pi-strata] STRATA_SERVER_URL: ${(error as Error).message}`);
+          return "";
+        }
+      })
       .filter(Boolean);
     if (fromEnv.length > 0) return fromEnv;
 
     const configured = (await this.get()).servers ?? [];
     const urls: string[] = [];
     for (const server of configured) {
-      const url = typeof server?.url === "string" ? server.url.trim().replace(/\/+$/, "") : "";
-      if (!url) {
+      const entered = typeof server?.url === "string" ? server.url : "";
+      if (!entered.trim()) {
         this.warnings.push("[pi-strata] a strataSettings.servers entry has no url; skipped");
         continue;
       }
-      if (!/^https?:\/\//i.test(url)) {
-        this.warnings.push(`[pi-strata] server url '${url}' needs http:// or https://; skipped`);
-        continue;
+      try {
+        // A bare `host:port` is accepted; only real nonsense is refused.
+        urls.push(parseServerUrl(entered));
+      } catch (error) {
+        this.warnings.push(`[pi-strata] ${(error as Error).message}`);
       }
-      urls.push(url);
     }
     // No implicit default: an unconfigured extension registers one provider
     // with no address instead, so /login can ask for it.
