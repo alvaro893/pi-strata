@@ -24,9 +24,9 @@ Unofficial: not affiliated with Strata or Pi.
 ## Install
 
 ```bash
-pi install npm:pi-strata                          # from npm
 pi install git:github.com/alvaro893/pi-strata    # straight from git
 pi -e git:github.com/alvaro893/pi-strata         # try it for one run, without installing
+pi install npm:pi-strata                          # once it is on npm
 ```
 
 Requires Pi 1.1.0 or newer: verified against Pi 1.1.0 and 1.2.0 with Strata 0.1.43.1.
