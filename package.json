@@ -1,0 +1,52 @@
+{
+  "name": "pi-strata",
+  "version": "0.1.0",
+  "description": "Pi extension for Strata: browse the model a Strata server serves, load it, unload it, and see its state from the command palette.",
+  "keywords": [
+    "pi",
+    "pi-package",
+    "pi-extension",
+    "strata",
+    "llama-cpp",
+    "local-llm",
+    "gguf"
+  ],
+  "author": "alvaro893",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alvaro893/pi-strata.git"
+  },
+  "homepage": "https://github.com/alvaro893/pi-strata#readme",
+  "bugs": {
+    "url": "https://github.com/alvaro893/pi-strata/issues"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE.md"
+  ],
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node test/smoke.mjs",
+    "live": "node test/live.mjs"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.0"
+  }
+}
