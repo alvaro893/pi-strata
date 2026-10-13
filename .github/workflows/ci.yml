@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Peer dependencies (the Pi packages) are installed here on purpose:
+      # they are what the types and the runtime imports resolve against.
+      # A new Pi release that breaks the extension fails this job.
+      - name: Install
+        run: npm install --no-audit --no-fund
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # Drives the real modules against a stand-in Strata server: no GPU,
+      # no model, no network.
+      - name: Test
+        run: npm test

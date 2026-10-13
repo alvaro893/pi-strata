@@ -29,7 +29,7 @@ pi install git:github.com/alvaro893/pi-strata    # straight from git
 pi -e git:github.com/alvaro893/pi-strata         # try it for one run, without installing
 ```
 
-Requires Pi 1.1.0 or newer (verified against 1.1.0 and Strata 0.1.43.1).
+Requires Pi 1.1.0 or newer: verified against Pi 1.1.0 and 1.2.0 with Strata 0.1.43.1.
 
 Then point Pi at your server (any of these; first match wins):
 

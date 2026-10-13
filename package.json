@@ -47,6 +47,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "jiti": "^2.7.0",
     "typescript": "^5.9.0"
   }
 }
