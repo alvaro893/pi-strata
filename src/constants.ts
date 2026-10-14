@@ -62,9 +62,6 @@ export const AUTOLOAD_ON_MESSAGE = false;
 /** Default for `showServerUrls`. */
 export const SHOW_SERVER_URLS = true;
 
-/** Default for `statusLine`. */
-export const STATUS_LINE = true;
-
 /**
  * Pi thinking levels -> Strata's `reasoning_effort`.
  * Strata knows exactly four levels (none, low, medium, high), so Pi's wider

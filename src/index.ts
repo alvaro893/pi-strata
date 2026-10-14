@@ -1,12 +1,7 @@
-import type {
-  ExtensionAPI,
-  ExtensionCommandContext,
-  ExtensionContext,
-} from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { PROVIDER_PREFIX } from "./constants.ts";
 import { createRegistry } from "./registry.ts";
 import { createSettingsManager } from "./settings.ts";
-import { ICONS } from "./server.ts";
 import {
   browseModels,
   editRunConfig,
@@ -44,32 +39,13 @@ export default async function (pi: ExtensionAPI) {
   // place before the first prompt.
   const warnings = await registry.update(pi);
 
-  /** Keep the footer line short and live: `<icon> <model> · <ctx>K · <server>`. */
-  const updateStatusLine = async (ctx: ExtensionContext): Promise<void> => {
-    if (!(await settings.resolveStatusLine())) return;
-    const model = ctx.model;
-    const located = model ? registry.getServerForModel(model.id) : undefined;
-
-    if (!model || !model.provider.startsWith(PROVIDER_PREFIX) || !located) {
-      ctx.ui.setStatus("Strata", undefined);
-      return;
-    }
-    const { server } = located;
-    const name = server.config.name ?? server.url.replace(/^https?:\/\//, "");
-    const ctxK = Math.round(server.contextWindow(located.model) / 1024);
-    ctx.ui.setStatus("Strata", `${ICONS[server.statusOf(located.model)]} ${model.id} · ${ctxK}K · ${name}`);
-  };
-
   pi.on("session_start", async (_event, ctx) => {
     for (const warning of warnings) ctx.ui.notify(warning, "warning");
-    await updateStatusLine(ctx);
   });
 
   // Picking a Strata model in Pi's model picker takes the model into memory,
   // unless the server wakes it on its own.
   pi.on("model_select", async (event, ctx) => {
-    await updateStatusLine(ctx);
-
     if (!event.model.provider.startsWith(PROVIDER_PREFIX)) return;
     if (!(await settings.resolveReactToModelSelect())) return;
     if (!ctx.hasUI) return;
@@ -86,7 +62,6 @@ export default async function (pi: ExtensionAPI) {
     if (kind === "loaded" || kind === "sleeping" || kind === "loading") return;
 
     await loadModel(ctx, located.server, located.model);
-    await updateStatusLine(ctx);
   });
 
   pi.on("before_provider_request", async (event, ctx) => {
@@ -148,7 +123,6 @@ export default async function (pi: ExtensionAPI) {
       switch (sub) {
         case "":
           await browseModels(pi, ctx, registry, settings);
-          await updateStatusLine(ctx);
           break;
         case "servers":
           await manageServers(pi, ctx, registry, settings);
@@ -161,15 +135,12 @@ export default async function (pi: ExtensionAPI) {
           break;
         case "refresh":
           await refresh(pi, ctx, registry);
-          await updateStatusLine(ctx);
           break;
         case "load":
           await currentModelAction(ctx, "load");
-          await updateStatusLine(ctx);
           break;
         case "unload":
           await currentModelAction(ctx, "unload");
-          await updateStatusLine(ctx);
           break;
         default:
           ctx.ui.notify(

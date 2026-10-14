@@ -10,7 +10,6 @@ import { startFakeStrata } from "./fake-strata.mjs";
 const jiti = createJiti(import.meta.url, { tsconfigPath: join(process.cwd(), "tsconfig.json") });
 const { StrataSettingsManager } = await jiti.import("../src/settings.ts");
 const { StrataRegistry } = await jiti.import("../src/registry.ts");
-const { ICONS } = await jiti.import("../src/server.ts");
 const createExtension = (await jiti.import("../src/index.ts")).default;
 
 
@@ -57,6 +56,8 @@ function fakeCtx(overrides = {}) {
     thinkingLevel: undefined,
     ui: {
       notify: (message, type) => notices.push([type ?? "info", message]),
+      // Recorded, then asserted empty: the extension must write nothing to
+      // Pi's footer. Kept as a trap, not as something the extension uses.
       setStatus: (key, text) => (statuses[key] = text),
       select: async () => undefined,
       input: async () => undefined,
@@ -352,11 +353,16 @@ try {
   await wired.commands.get("strata").handler("status", quiet);
   assert.match(quiet.notices[0]?.[1] ?? "", /model      :/, "/strata status prints the server summary");
 
-  // The footer line reflects the live state.
+  // Nothing may be written to the footer: it stays Pi's.
   const statusCtx = fakeCtx({ model: { id: openServer.models[0].id, provider: openProviderId } });
   await openServer.refresh(2000);
   await wired.emit("session_start", { type: "session_start", reason: "startup" }, statusCtx);
-  assert.match(statusCtx.statuses.Strata ?? "", new RegExp(ICONS[openServer.statusOf(openServer.models[0])]), "status line icon");
+  await wired.emit(
+    "model_select",
+    { type: "model_select", model: { id: openServer.models[0].id, provider: openProviderId }, previousModel: undefined, source: "user" },
+    statusCtx,
+  );
+  assert.deepEqual(statusCtx.statuses, {}, "no status is written to the footer");
 
   // before_provider_request: only Strata models get a thinking budget.
   const request = await wired.emit(

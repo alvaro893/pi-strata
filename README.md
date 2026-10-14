@@ -18,7 +18,6 @@ Unofficial: not affiliated with Strata or Pi.
   plus servers, settings and Strata's own run-config editor.
 - **Loads on selection** - picking a Strata model in `/model` takes it into memory
   (unless the server wakes it by itself).
-- **Status line** - `🟢 qwen3.8-flash-next-iq4_xs · 131K · workstation` in the footer.
 - **Unload frees the machine** - VRAM and pinned RAM go back without touching the server.
 
 ## Install
@@ -156,7 +155,6 @@ one entry at its address.
     "reactToModelSelect": true,   // load the model when it is picked
     "autoloadOnMessage": false,   // load before the first message instead of letting the request wait
     "showServerUrls": true,       // show which server a model belongs to
-    "statusLine": true,           // footer status line while a Strata model is active
     "serverTimeout": 2000,        // ms for health/status reads
     "loadTimeout": 900000,        // ms to wait for a load (Strata reads 35-55 GB: 1-3 min)
     "reasoningBudgets": {}        // e.g. { "low": 1024, "medium": 4096, "high": 16384 }

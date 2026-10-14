@@ -51,8 +51,6 @@ export interface StrataSettings {
   autoloadOnMessage?: boolean;
   /** Show `[Server: <url>]` in the model list. Default: true. */
   showServerUrls?: boolean;
-  /** Keep a footer status line with the live server state. Default: true. */
-  statusLine?: boolean;
   /** Timeout (ms) for health/status requests. Default: 2000. */
   serverTimeout?: number;
   /** Timeout (ms) for a model load. Default: 900000. */

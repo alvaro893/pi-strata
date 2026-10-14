@@ -187,26 +187,24 @@ async function switchToModel(
   await loadModel(ctx, server, model);
 }
 
-/** Load a model, keeping the footer status line informative. */
+/**
+ * Load a model. Strata reads 35-55 GB, so this takes minutes; the two
+ * notifications are the whole progress report - nothing is written to the
+ * footer, where the extension has no business.
+ */
 export async function loadModel(
   ctx: ExtensionContext,
   server: StrataServer,
   model: StrataModel,
 ): Promise<boolean> {
-  const key = "Strata";
-  ctx.ui.setStatus(key, `🟡 loading ${model.id} on ${server.url} (1-3 min)...`);
-  ctx.ui.notify(`Loading ${model.id} into ${server.url} - Strata reads 35-55 GB, so this takes a while`, "info");
+  ctx.ui.notify(`Loading ${model.id} into ${server.url} (a minute or two)`, "info");
   try {
-    await server.load(model, (elapsed) =>
-      ctx.ui.setStatus(key, `🟡 loading ${model.id} (${elapsed}s)...`),
-    );
+    await server.load(model);
     ctx.ui.notify(`Loaded ${model.id} on ${server.url}`, "info");
     return true;
   } catch (error) {
     ctx.ui.notify(`Could not load ${model.id}: ${(error as Error).message}`, "error");
     return false;
-  } finally {
-    ctx.ui.setStatus(key, undefined);
   }
 }
 
@@ -359,14 +357,12 @@ export async function editSettings(
   const TOGGLE_REACT = `${current.reactToModelSelect ? "✅" : "⬜"} Load when the model is picked`;
   const TOGGLE_AUTOLOAD = `${current.autoloadOnMessage ? "✅" : "⬜"} Load before the first message`;
   const TOGGLE_URLS = `${current.showServerUrls ? "✅" : "⬜"} Show the server in the model list`;
-  const TOGGLE_STATUS = `${current.statusLine ?? true ? "✅" : "⬜"} Show a status line in the footer`;
   const TIMEOUTS = `⏱  Timeouts: ${current.serverTimeout ?? 2000} ms probe / ${current.loadTimeout ?? 900000} ms load`;
 
   const choice = await ctx.ui.select("Strata settings", [
     TOGGLE_REACT,
     TOGGLE_AUTOLOAD,
     TOGGLE_URLS,
-    TOGGLE_STATUS,
     TIMEOUTS,
     CANCEL,
   ]);
@@ -380,9 +376,6 @@ export async function editSettings(
       break;
     case TOGGLE_URLS:
       await settings.setSetting("showServerUrls", !(current.showServerUrls ?? true));
-      break;
-    case TOGGLE_STATUS:
-      await settings.setSetting("statusLine", !(current.statusLine ?? true));
       break;
     case TIMEOUTS: {
       const probe = await ctx.ui.input("Probe timeout (ms)", String(current.serverTimeout ?? 2000));

@@ -19,7 +19,6 @@ import {
   SERVER_TIMEOUT,
   SETTINGS_KEY,
   SHOW_SERVER_URLS,
-  STATUS_LINE,
 } from "./constants.ts";
 import type { StrataModelOverride, StrataServerConfig, StrataSettings } from "./types.ts";
 
@@ -232,10 +231,6 @@ export class StrataSettingsManager {
 
   async resolveShowServerUrls(): Promise<boolean> {
     return (await this.get()).showServerUrls ?? SHOW_SERVER_URLS;
-  }
-
-  async resolveStatusLine(): Promise<boolean> {
-    return (await this.get()).statusLine ?? STATUS_LINE;
   }
 
   async resolveServerTimeout(): Promise<number> {
