@@ -20,6 +20,13 @@ import * as host from "@earendil-works/pi-coding-agent";
  * Everything else is common: `pi.on`, `registerCommand`, `ctx.ui.*`,
  * `ctx.modelRegistry`, `getAgentDir`, `readStoredCredential`, and the
  * `model_select` / `before_provider_request` events.
+ *
+ * A third kind of host has no entry here: a Pi-ABI bridge such as pi2dsh on
+ * DeepSeek Harness, which serves these imports from its own compatibility
+ * surface. It is not detectable from an export, so it is treated as Pi and
+ * corrected by observation instead - the registry checks what the host really
+ * registered and falls back to `(name, config)`; see
+ * `StrataRegistry.ensureRegistered`.
  */
 export type HostName = "pi" | "oh-my-pi";
 

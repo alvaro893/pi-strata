@@ -13,23 +13,46 @@ const { StrataRegistry } = await jiti.import("../src/registry.ts");
 const createExtension = (await jiti.import("../src/index.ts")).default;
 
 
-/** A stand-in for Pi's ExtensionAPI. */
-function fakePi() {
+/**
+ * A stand-in for Pi's ExtensionAPI.
+ *
+ * `accepts` narrows what the fake host will take, so the extension's fallback
+ * paths can be exercised without such a host to hand:
+ * - "both" (default): Pi, which takes a native provider or (name, config)
+ * - "legacy": a host that ignores a single-argument registration, the way a
+ *   bridge that only implements (name, config) would
+ * - "one-provider": a host that refuses a second provider (DeepSeek Harness)
+ */
+function fakePi({ accepts = "both" } = {}) {
   const providers = new Map();
   const handlers = new Map();
   const commands = new Map();
+  const refused = [];
   return {
     providers,
     handlers,
     commands,
+    refused,
     registerProvider(idOrProvider, config) {
+      const native = typeof idOrProvider !== "string";
+      if (native && accepts === "legacy") {
+        // Accepted and dropped: this is the silent case the extension has to
+        // notice by looking at the registry afterwards.
+        refused.push(idOrProvider.id);
+        return;
+      }
+      if (accepts === "one-provider" && providers.size > 0 && !providers.has(native ? idOrProvider.id : idOrProvider)) {
+        throw new Error("DUPLICATE_PROVIDER: one provider per context");
+      }
       // Native provider objects arrive with one argument; the legacy
       // (id, config) pair with two.
-      if (typeof idOrProvider === "string") providers.set(idOrProvider, config);
-      else providers.set(idOrProvider.id, idOrProvider);
+      const id = native ? idOrProvider.id : idOrProvider;
+      providers.set(id, native ? idOrProvider : config);
+      hostProviders.add(id); // a real host registry would report this
     },
     unregisterProvider(id) {
       providers.delete(id);
+      hostProviders.delete(id);
     },
     on(event, handler) {
       handlers.set(event, handler);
@@ -42,6 +65,9 @@ function fakePi() {
     },
   };
 }
+
+/** Provider ids the host's registry would report to a context. */
+const hostProviders = new Set();
 
 /** A stand-in for Pi's ExtensionContext. */
 function fakeCtx(overrides = {}) {
@@ -63,7 +89,13 @@ function fakeCtx(overrides = {}) {
       input: async () => undefined,
       confirm: async () => true,
     },
-    modelRegistry: { find: () => undefined },
+    modelRegistry: {
+      find: () => undefined,
+      // What the host really registered, which is what ensureRegistered asks.
+      getRegisteredProviderIds: () => [...hostProviders],
+      getAll: () => [...hostProviders].map((provider) => ({ provider })),
+    },
+    thinkingLevel: undefined,
     ...overrides,
   };
 }
@@ -259,7 +291,7 @@ try {
 
   // An unreachable address is rejected too, naming it and the reason.
   await assert.rejects(
-    () => keyedProvider.auth.apiKey.login({
+    keyedProvider.auth.apiKey.login({
       signal: new AbortController().signal,
       prompt: async (prompt) => (prompt.type === "text" ? "127.0.0.1:45999" : ""),
       notify: () => undefined,
@@ -410,6 +442,74 @@ try {
   await Promise.all([open, lazy, keyed].map(async (server) => server && (await server.close())));
   process.chdir(tmpdir());
   await rm(temp, { recursive: true, force: true });
+}
+
+// ------------------------------------------- hosts that are not Pi or oh-my-pi
+// A Pi-ABI bridge (pi2dsh on DeepSeek Harness is the case in point) is free to
+// accept a registration and drop it. Registration alone is never proof: the
+// extension asks the model registry afterwards and switches form if needed.
+//
+// These run in their own directory and agent dir - the shared temp dir above is
+// cleaned up by the time they start - so nothing here can touch real settings.
+{
+  const dir = await mkdtemp(join(tmpdir(), "pi-strata-hosts-"));
+  process.env.PI_CODING_AGENT_DIR = join(dir, "agent");
+  await mkdir(join(dir, ".pi"), { recursive: true });
+  process.chdir(dir);
+
+  try {
+    // --- a host that only implements (name, config), and silently drops the rest
+    const bridgeServer = await startFakeStrata({ loaded: true });
+    process.env.STRATA_SERVER_URL = bridgeServer.url;
+    const bridgePi = fakePi({ accepts: "legacy" });
+    const bridgeRegistry = new StrataRegistry(new StrataSettingsManager());
+    await bridgeRegistry.update(bridgePi);
+    assert.equal(bridgePi.providers.size, 0, "a bridge that ignores the native form registers nothing");
+    assert.equal(bridgePi.refused.length, 1, "and the native attempt was made and dropped");
+    assert.equal(bridgeRegistry.registrationMode, "native", "which the extension cannot see yet");
+
+    const bridgeCtx = fakeCtx();
+    assert.equal(
+      await bridgeRegistry.ensureRegistered(bridgePi, bridgeCtx),
+      true,
+      "the missing provider is noticed and registered again",
+    );
+    assert.equal(bridgeRegistry.registrationMode, "legacy", "using the plain (name, config) form");
+    const fallbackId = `strata-server=${bridgeServer.url}`;
+    assert.ok(bridgePi.providers.has(fallbackId), "so the provider exists after all");
+    assert.equal(bridgePi.providers.get(fallbackId).name, `Strata (${bridgeServer.url})`.replace(/^Strata /, "Strata "), "with its name");
+    assert.equal(bridgePi.providers.get(fallbackId).api, "openai-completions", "the protocol spelled out");
+    assert.ok(Array.isArray(bridgePi.providers.get(fallbackId).models), "and a plain model list, not a provider object");
+    assert.ok(bridgePi.providers.get(fallbackId).models.length > 0, "holding the model the probe found");
+    assert.equal(bridgeCtx.notices.length, 0, "nothing is reported as broken");
+    assert.equal(await bridgeRegistry.ensureRegistered(bridgePi, bridgeCtx), false, "and the choice sticks");
+
+    // --- a host that mounts one provider per session
+    const first = await startFakeStrata({ loaded: true, model: "first-model", aliases: [] });
+    const second = await startFakeStrata({ loaded: true, model: "second-model", aliases: [] });
+    await new StrataSettingsManager().setServers([{ url: first.url }, { url: second.url }]);
+    delete process.env.STRATA_SERVER_URL;
+    const onePi = fakePi({ accepts: "one-provider" });
+    const oneRegistry = new StrataRegistry(new StrataSettingsManager());
+    const oneWarnings = await oneRegistry.update(onePi);
+    assert.equal(onePi.providers.size, 1, "one server is registered");
+    assert.match(oneWarnings.join("\n"), /one provider per session/, "the other is reported");
+    assert.match(
+      oneWarnings.join("\n"),
+      new RegExp(`only ${first.url} is in use`),
+      "and the report names the server that is actually in use",
+    );
+    const oneCtx = fakeCtx();
+    await oneRegistry.ensureRegistered(onePi, oneCtx);
+    assert.equal(onePi.providers.size, 1, "and verification does not force a second one");
+    assert.equal(oneCtx.notices.length, 0, "nor cry wolf about the host");
+    await Promise.all([first.close(), second.close(), bridgeServer.close()]);
+  } finally {
+    delete process.env.PI_CODING_AGENT_DIR;
+    delete process.env.STRATA_SERVER_URL;
+    process.chdir(tmpdir());
+    await rm(dir, { recursive: true, force: true });
+  }
 }
 
 console.log("ok - smoke test passed");

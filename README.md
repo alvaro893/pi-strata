@@ -8,9 +8,12 @@ It does for Strata what the `pi-llama-cpp` extension does for llama.cpp: the
 model appears in `/model` with the right context window, vision and thinking
 support, and `/strata` gives you the browser, the loader and the status line.
 
-Works under **Pi** and under [**oh-my-pi**](https://github.com/can1357/oh-my-pi)
-(`omp`), which is a fork of Pi with a different extension API; see
-[Hosts](#hosts). Unofficial: not affiliated with Strata, Pi, or oh-my-pi.
+Works under **Pi**, under [**oh-my-pi**](https://github.com/can1357/oh-my-pi)
+(`omp`) - a fork of Pi with a different extension API - and, through the
+[pi2dsh](https://github.com/weijiafu14/pi2dsh) compatibility engine, under
+[**DeepSeek Harness**](https://github.com/deepseek-ai/deepseek-harness) (`dsh`).
+See [Hosts](#hosts). Unofficial: not affiliated with Strata, Pi, oh-my-pi, or
+DeepSeek.
 
 ## What it does
 
@@ -33,6 +36,10 @@ pi install git:github.com/alvaro893/pi-strata@v0.3.0   # pin a release
 # oh-my-pi
 omp plugin link /path/to/pi-strata                # from a checkout
 omp install github:alvaro893/pi-strata            # from GitHub
+
+# DeepSeek Harness, through the pi2dsh compatibility engine
+dsh plugin --profile web add pi2dsh
+dsh plugin --profile web add <this package>
 ```
 
 The host clones the repository and loads `src/index.ts` directly (it is
@@ -182,20 +189,57 @@ so offering the whole window for one answer only invites runaways.
 
 ## Hosts
 
-|  | Pi | oh-my-pi |
-| --- | --- | --- |
-| provider registration | a native `Provider` | `registerProvider(name, config)` |
-| interactive setup | `/login` or `/strata connect` | `/strata connect` |
-| config dir | `.pi` | `.omp` |
-| url-based provider id | `strata-server=http://host:8081` | `strata-server=host-8081` |
-| models refresh | Pi re-reads them itself | the extension re-registers after a load, unload or connect |
+|  | Pi | oh-my-pi | DeepSeek Harness (via pi2dsh) |
+| --- | --- | --- | --- |
+| provider registration | a native `Provider`, or `(name, config)` | `(name, config)` | a native `Provider` or `(name, config)`, resolved by the bridge |
+| interactive setup | `/login` or `/strata connect` | `/strata connect` | `/strata connect` |
+| config dir | `.pi` | `.omp` | Pi's, served from the bridge |
+| url-based provider id | `strata-server=http://host:8081` | `strata-server=host-8081` | as Pi |
+| models refresh | Pi re-reads them itself | the extension re-registers after a load, unload or connect | the same |
 
 oh-my-pi's extension API is close to Pi's - `pi.on`, `registerCommand`,
 `ctx.ui.*`, `ctx.modelRegistry`, `getAgentDir`, `readStoredCredential` and the
 `model_select` / `before_provider_request` events all exist there - but it takes
-no native provider and has no `/login` hook, and it resolves `--model` itself,
-which is why provider ids lose their colons there. The differences are detected
-in `src/host.ts`, which is the only file that knows about them.
+no native provider, has no `/login` hook, and resolves `--model` itself, which is
+why provider ids lose their colons there. Those differences are found in
+`src/host.ts`.
+
+A Pi-ABI bridge is not detectable from an export, so registration is not
+conditional on knowing the host: the extension registers, then asks the model
+registry what it actually holds on `session_start`. If nothing of ours is in it,
+it registers again in the plain `(name, config)` form; if that fails too, it says
+so once instead of leaving the user with a silently empty model list. A host that
+mounts a single provider per session (dsh does) is detected the same way, and the
+servers it cannot take are named.
+
+### DeepSeek Harness
+
+`dsh` is not a Pi fork: it is DeepSeek's own Cordis-based harness with a
+different plugin architecture. Pi extensions reach it through a compatibility
+engine, and [pi2dsh](https://github.com/weijiafu14/pi2dsh) is the one that
+implements the surface this extension needs - including a `registerProvider`
+that turns a transport-owning provider into a real DSH route carried by the
+package's own HTTP client.
+
+```bash
+dsh plugin --profile web add pi2dsh
+dsh plugin --profile web add <this package>
+# then restart dsh
+```
+
+**Not yet verified there.** The adaptive registration above is covered by tests
+against simulated hosts (one that drops the native form, one that mounts a
+single provider), but it has not been run against a real `dsh` installation -
+neither has `/strata connect` on that host. Known limits when it is:
+
+- `dsh` mounts one provider per session, so only the first configured server is
+  registered; the rest are reported.
+- pi2dsh does not read `models.json` itself, so a key has to come from
+  `/strata connect` (which writes `auth.json`), `STRATA_API_KEY`, or a `models.json`
+  entry, which this extension reads for itself.
+- pi2dsh pins its Pi extension semantics to 0.84.1 while this extension is built
+  against Pi 1.1/1.2; the native `/login` prompt is the part most likely to
+  differ, which is why `/strata connect` is the way in.
 
 ## How it talks to Strata
 

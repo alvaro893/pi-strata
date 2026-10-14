@@ -1,6 +1,6 @@
 {
   "name": "pi-strata",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Pi and oh-my-pi extension for Strata: browse the model a Strata server serves, load it, unload it, and see its state.",
   "keywords": [
     "pi",

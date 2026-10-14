@@ -43,6 +43,11 @@ export default async function (pi: ExtensionAPI) {
 
   pi.on("session_start", async (_event, ctx) => {
     for (const warning of warnings) ctx.ui.notify(warning, "warning");
+
+    // A host may accept a registration and quietly drop it (a Pi-ABI bridge is
+    // free to). Ask the model registry what it actually holds, and fall back to
+    // the plain provider form if our registration is not in it.
+    await registry.ensureRegistered(pi, ctx);
   });
 
   // Picking a Strata model in Pi's model picker takes the model into memory,
