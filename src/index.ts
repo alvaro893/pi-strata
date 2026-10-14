@@ -1,9 +1,10 @@
-import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { PROVIDER_PREFIX } from "./constants.ts";
-import { createRegistry } from "./registry.ts";
+import { createRegistry, type StrataRegistry } from "./registry.ts";
 import { createSettingsManager } from "./settings.ts";
 import {
   browseModels,
+  connectServer,
   editRunConfig,
   editSettings,
   loadModel,
@@ -13,6 +14,7 @@ import {
   unloadModel,
 } from "./ui.ts";
 const SUBCOMMANDS: { value: string; label: string; description: string }[] = [
+  { value: "connect", label: "connect", description: "Enter a server URL and its API key" },
   { value: "status", label: "status", description: "Reachability, model, VRAM and timings per server" },
   { value: "servers", label: "servers", description: "Add, edit or remove Strata servers" },
   { value: "settings", label: "settings", description: "Behaviour of this extension" },
@@ -62,6 +64,10 @@ export default async function (pi: ExtensionAPI) {
     if (kind === "loaded" || kind === "sleeping" || kind === "loading") return;
 
     await loadModel(ctx, located.server, located.model);
+    // What a server offers changes with its state (aliases appear once the
+    // model is in memory), and oh-my-pi needs the provider registered again to
+    // see that - Pi would refresh on its own.
+    await syncCatalog(pi, ctx, registry);
   });
 
   pi.on("before_provider_request", async (event, ctx) => {
@@ -85,7 +91,7 @@ export default async function (pi: ExtensionAPI) {
     // Strata caps thinking length with `reasoning_budget_tokens`; send it only
     // when the user mapped Pi's thinking levels to token budgets.
     const budgets = await settings.resolveReasoningBudgets();
-    const level = ctx.thinkingLevel ?? settings.getThinkingLevel() ?? "medium";
+    const level = ctx.thinkingLevel ?? (await settings.getThinkingLevel()) ?? "medium";
     const budget = budgets[level];
     if (
       typeof budget === "number" &&
@@ -123,6 +129,10 @@ export default async function (pi: ExtensionAPI) {
       switch (sub) {
         case "":
           await browseModels(pi, ctx, registry, settings);
+          await syncCatalog(pi, ctx, registry);
+          break;
+        case "connect":
+          await connectServer(pi, ctx, registry, settings);
           break;
         case "servers":
           await manageServers(pi, ctx, registry, settings);
@@ -138,9 +148,11 @@ export default async function (pi: ExtensionAPI) {
           break;
         case "load":
           await currentModelAction(ctx, "load");
+          await syncCatalog(pi, ctx, registry);
           break;
         case "unload":
           await currentModelAction(ctx, "unload");
+          await syncCatalog(pi, ctx, registry);
           break;
         default:
           ctx.ui.notify(
@@ -169,4 +181,14 @@ export default async function (pi: ExtensionAPI) {
     if (action === "load") await loadModel(ctx, located.server, located.model);
     else await unloadModel(ctx, located.server, located.model);
   };
+}
+
+/** Re-probe and re-register without announcing it, unless something is wrong. */
+async function syncCatalog(
+  pi: ExtensionAPI,
+  ctx: ExtensionContext,
+  registry: StrataRegistry,
+): Promise<void> {
+  const warnings = await registry.update(pi);
+  for (const warning of warnings) ctx.ui.notify(warning, "warning");
 }

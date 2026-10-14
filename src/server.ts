@@ -127,7 +127,9 @@ export class StrataServer {
         health: health.value,
         error: {
           kind: "unauthorized",
-          message: `${this.url} needs an API key - run /login and pick ${this.providerName}`,
+          message:
+            `${this.url} refused the API key (or has none): ` +
+            `run /strata connect and enter the key it expects`,
         },
       };
       return;

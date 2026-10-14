@@ -3,13 +3,15 @@ import type {
   ExtensionCommandContext,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { parseServerUrl } from "./client.ts";
+import { parseServerUrl, StrataClient } from "./client.ts";
+import { supportsLoginDialog, writeCredential } from "./host.ts";
 import { ICONS, type StrataModel, type StrataServer } from "./server.ts";
 import type { StrataRegistry } from "./registry.ts";
-import type { StrataSettingsManager } from "./settings.ts";
+import { StrataSettingsManager } from "./settings.ts";
 import type { StrataConfigKey, StrataSettings, StrataServerConfig } from "./types.ts";
 
 const REFRESH = "🔄 Refresh";
+const CONNECT = "🔌 Connect…";
 
 /** How a server is named in menus; the unconfigured entry says what to do. */
 function serverLabel(server: StrataServer): string {
@@ -63,10 +65,14 @@ export async function browseModels(
     const labels = located.map(({ server, model }) => formatModelLabel(server, model, showServerUrls));
     const choice = await ctx.ui.select(
       "Strata models (green = loaded, blue = wakes on use, grey = unloaded)",
-      [...labels, REFRESH, STATUS, SERVERS, SETTINGS, RUN_CONFIG, CANCEL],
+      [...labels, CONNECT, REFRESH, STATUS, SERVERS, SETTINGS, RUN_CONFIG, CANCEL],
     );
     if (!choice || choice === CANCEL) return;
 
+    if (choice === CONNECT) {
+      await connectServer(pi, ctx, registry, settings);
+      continue;
+    }
     if (choice === REFRESH) {
       await refresh(pi, ctx, registry);
       continue;
@@ -146,8 +152,10 @@ async function modelActions(
       }
       break;
     case DEFAULT:
-      settings.setDefaultModel(server.providerId, model.id);
-      ctx.ui.notify(`Default model: ${server.providerId}/${model.id}`, "info");
+      if (await settings.setDefaultModel(server.providerId, model.id))
+        ctx.ui.notify(`Default model: ${server.providerId}/${model.id}`, "info");
+      else
+        ctx.ui.notify("This host keeps its default model elsewhere; set it in its own model picker", "warning");
       break;
     case INFO:
       ctx.ui.notify(server.info(model), "info");
@@ -226,6 +234,92 @@ export async function unloadModel(
   }
 }
 
+/**
+ * `/strata connect`: ask for a server URL and its API key, prove the pair,
+ * then store both and re-register.
+ *
+ * Pi can also do this through `/login`, which needs a native provider. oh-my-pi
+ * has no such dialog hook, so this command is the way in on both hosts: the URL
+ * goes to `strataSettings.servers`, the key to `auth.json` under the provider
+ * id, and the provider is registered again so the key takes effect immediately.
+ */
+export async function connectServer(
+  pi: ExtensionAPI,
+  ctx: ExtensionCommandContext,
+  registry: StrataRegistry,
+  settings: StrataSettingsManager,
+): Promise<void> {
+  const configured = await settings.resolveServers();
+  const current = configured[0];
+  const known = current?.url ?? "";
+
+  const entered = (await ctx.ui.input("Strata server URL", known || "http://127.0.0.1:8080"))?.trim();
+  if (!entered && !known) return;
+
+  let url: string;
+  try {
+    url = parseServerUrl(entered ?? "", known);
+  } catch (error) {
+    ctx.ui.notify((error as Error).message, "error");
+    return;
+  }
+
+  const key = (
+    await ctx.ui.input(
+      `API key for ${url} (leave empty if it runs without one)`,
+      process.env.STRATA_API_KEY ? "(STRATA_API_KEY is set)" : "optional",
+    )
+  )?.trim();
+  if (key === undefined) return;
+
+  // Prove the pair before saving anything.
+  const client = new StrataClient(url, key || "strata");
+  try {
+    const health = await client.health(5000);
+    if (health.service && health.service !== "strata")
+      throw new Error(`${url} answers, but it does not look like a Strata server`);
+    if (health.api_key && !key) throw new Error(`${url} requires an API key`);
+    if (key) await client.models(10_000);
+    ctx.ui.notify(`${url} serves ${health.model}${health.loaded ? " (loaded)" : ""}`, "info");
+  } catch (error) {
+    ctx.ui.notify(
+      `${(error as Error).message}\n` +
+        (health_help(hostHint()) ?? ""),
+      "error",
+    );
+    return;
+  }
+
+  const servers = configured.length > 0 ? [...configured] : [{ url }];
+  servers[0] = { ...servers[0], url };
+  await settings.setServers(servers);
+
+  const providerId = StrataSettingsManager.providerId(url, servers[0].id);
+  const stored = writeCredential(providerId, {
+    type: "api_key",
+    key: key || undefined,
+    env: { STRATA_SERVER_URL: url },
+  });
+
+  await refresh(pi, ctx, registry);
+  ctx.ui.notify(
+    `Connected to ${url} (provider ${providerId}).\n` +
+      (stored
+        ? "The URL and key are stored for the next session."
+        : "The key could not be written to auth.json - it may not survive a restart.") +
+      (supportsLoginDialog ? "\nTip: /login does the same thing on this host." : ""),
+    "info",
+  );
+}
+
+function hostHint(): string {
+  return "Check the URL, that the server is running, and that the key matches";
+}
+
+function health_help(hint: string): string {
+  return hint;
+}
+
 /** `/strata status`: one block per server. */
 export function showStatus(ctx: ExtensionContext, registry: StrataRegistry): void {
   const servers = registry.getServers();
@@ -253,11 +347,17 @@ export async function manageServers(
 
     const choice = await ctx.ui.select("Strata servers", [
       ...labels,
+      "🔌 Connect to a server…",
       "➕ Add server",
       ...(labels.length > 0 ? ["✏️ Edit server", "🗑 Remove server"] : []),
       CANCEL,
     ]);
     if (!choice || choice === CANCEL) return;
+
+    if (choice === "🔌 Connect to a server…") {
+      await connectServer(pi, ctx, registry, settings);
+      continue;
+    }
 
     if (choice === "➕ Add server") {
       const url = await promptUrl(ctx, "http://127.0.0.1:8080");

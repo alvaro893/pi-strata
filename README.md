@@ -8,7 +8,9 @@ It does for Strata what the `pi-llama-cpp` extension does for llama.cpp: the
 model appears in `/model` with the right context window, vision and thinking
 support, and `/strata` gives you the browser, the loader and the status line.
 
-Unofficial: not affiliated with Strata or Pi.
+Works under **Pi** and under [**oh-my-pi**](https://github.com/can1357/oh-my-pi)
+(`omp`), which is a fork of Pi with a different extension API; see
+[Hosts](#hosts). Unofficial: not affiliated with Strata, Pi, or oh-my-pi.
 
 ## What it does
 
@@ -23,24 +25,32 @@ Unofficial: not affiliated with Strata or Pi.
 ## Install
 
 ```bash
-pi -e git:github.com/alvaro893/pi-strata         # try it for one run, without installing
-pi install git:github.com/alvaro893/pi-strata    # install it
-pi install git:github.com/alvaro893/pi-strata@v0.2.0   # pin a release
+# Pi
+pi -e git:github.com/alvaro893/pi-strata          # try it for one run
+pi install git:github.com/alvaro893/pi-strata     # install it
+pi install git:github.com/alvaro893/pi-strata@v0.3.0   # pin a release
+
+# oh-my-pi
+omp plugin link /path/to/pi-strata                # from a checkout
+omp install github:alvaro893/pi-strata            # from GitHub
 ```
 
-Pi clones the repository and loads `src/index.ts` directly (it is TypeScript,
-there is no build step). `pi list` shows it, `pi remove <source>` drops it, and
+The host clones the repository and loads `src/index.ts` directly (it is
+TypeScript, there is no build step). `pi list` / `omp plugin list` show it, and
 `pi update --extensions` reconciles it after a `git pull` or a new tag.
 
 Requires Pi 1.1.0 or newer: verified against Pi 1.1.0 and 1.2.0 with Strata 0.1.43.1.
 
-Then connect it to your server: run `/login`, choose **Strata**, and answer two
-prompts - the server URL and its API key:
+Then connect it to your server:
 
 ```text
-/login
-  Strata server URL: 192.168.0.62:8081        (a bare host:port is fine)
-  API key (leave empty for a server started without one): ****
+/strata connect        # both hosts: asks for the URL, then the API key
+/login                 # Pi only: choose Strata, then answer the same two prompts
+```
+
+```text
+Strata server URL: 192.168.0.62:8081        (a bare host:port is fine)
+API key (leave empty for a server started without one): ****
 ```
 
 The address may be written `192.168.0.62:8081`, `http://192.168.0.62:8081`, or
@@ -170,6 +180,23 @@ set the thinking length. When you set it, the matching value is sent as
 shortens `max_tokens` itself when the prompt would not fit (`fit_max_tokens`),
 so offering the whole window for one answer only invites runaways.
 
+## Hosts
+
+|  | Pi | oh-my-pi |
+| --- | --- | --- |
+| provider registration | a native `Provider` | `registerProvider(name, config)` |
+| interactive setup | `/login` or `/strata connect` | `/strata connect` |
+| config dir | `.pi` | `.omp` |
+| url-based provider id | `strata-server=http://host:8081` | `strata-server=host-8081` |
+| models refresh | Pi re-reads them itself | the extension re-registers after a load, unload or connect |
+
+oh-my-pi's extension API is close to Pi's - `pi.on`, `registerCommand`,
+`ctx.ui.*`, `ctx.modelRegistry`, `getAgentDir`, `readStoredCredential` and the
+`model_select` / `before_provider_request` events all exist there - but it takes
+no native provider and has no `/login` hook, and it resolves `--model` itself,
+which is why provider ids lose their colons there. The differences are detected
+in `src/host.ts`, which is the only file that knows about them.
+
 ## How it talks to Strata
 
 | Endpoint | Used for |
@@ -220,6 +247,14 @@ STRATA_SERVER_URL=http://host:port STRATA_API_KEY=... LOAD=1 node test/live.mjs
 unloads the model once; `RELOAD=1` loads it again at the end (about 2 minutes
 to give back and take 35 GB: measured at 10-20 s to unload and about 95 s to load
 on a V100 with an IQ4_XS model).
+
+To check oh-my-pi without a session, note that it logs extension load failures
+rather than showing them:
+
+```bash
+omp --mode rpc <<< '{"id":"1","type":"get_state"}'   # then read the log
+tail -F ~/.omp/logs/omp.$(date +%F).*.log | grep -i "extension"
+```
 
 `test/proxy.mjs` is a logging reverse proxy for checking the wire format
 against a real server:

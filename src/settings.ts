@@ -1,14 +1,15 @@
 import { execSync } from "node:child_process";
-import { readFileSync } from "node:fs";
 import { access, mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import type { ApiKeyCredential } from "@earendil-works/pi-ai";
-import {
-  getAgentDir,
-  readStoredCredential,
-  SettingsManager,
-} from "@earendil-works/pi-coding-agent";
 import { normalizeRoot, parseServerUrl } from "./client.ts";
+import {
+  modelsJsonProviders,
+  readCredential,
+  settingsPaths,
+  supportsDefaultModelSetting,
+  urlProviderId,
+} from "./host.ts";
 import {
   API_KEY_PLACEHOLDER,
   AUTOLOAD_ON_MESSAGE,
@@ -94,9 +95,10 @@ function resolveKey(key: string, env?: Record<string, string>): string {
  * 3. `http://127.0.0.1:8080`
  */
 export class StrataSettingsManager {
-  private readonly settingsManager = SettingsManager.create(process.cwd());
-  private readonly globalStore = new SettingsStore(join(getAgentDir(), "settings.json"));
-  private readonly projectStore = new SettingsStore(join(process.cwd(), ".pi", "settings.json"));
+  // Paths come from the host, so this works under Pi (.pi) and oh-my-pi (.omp).
+  private readonly paths = settingsPaths(process.cwd());
+  private readonly globalStore = new SettingsStore(this.paths.global);
+  private readonly projectStore = new SettingsStore(this.paths.project);
 
   /** Warnings about dropped configuration entries, drained once per scan. */
   private warnings: string[] = [];
@@ -107,12 +109,17 @@ export class StrataSettingsManager {
     return taken;
   }
 
+  /**
+   * The effective settings: this extension reads the files itself.
+   *
+   * Under Pi that is the very file Pi reads; under oh-my-pi the host's settings
+   * live elsewhere (its `SettingsManager` reports only `setupVersion`, and its
+   * `writeValue` is broken in 18.8.9), so a file this extension owns is the
+   * only thing that behaves the same on both.
+   */
   private async merged(): Promise<Record<string, unknown>> {
-    await this.settingsManager.reload();
-    return {
-      ...this.settingsManager.getGlobalSettings(),
-      ...this.settingsManager.getProjectSettings(),
-    } as Record<string, unknown>;
+    const [global, project] = await Promise.all([this.globalStore.read(), this.projectStore.read()]);
+    return { ...global, ...project };
   }
 
   async get(): Promise<StrataSettings> {
@@ -121,7 +128,7 @@ export class StrataSettingsManager {
 
   private async hasProjectSettings(): Promise<boolean> {
     try {
-      await access(join(process.cwd(), ".pi", "settings.json"));
+      await access(this.paths.project);
       return true;
     } catch {
       return false;
@@ -131,7 +138,7 @@ export class StrataSettingsManager {
   /** The provider ID of a server: its `id`, else `strata-server=<url>`. */
   static providerId(url: string, customId?: string): string {
     if (customId) return customId;
-    return url ? `${PROVIDER_PREFIX}=${url}` : PRIMARY_PROVIDER_ID;
+    return url ? urlProviderId(PROVIDER_PREFIX, url) : PRIMARY_PROVIDER_ID;
   }
 
   /**
@@ -199,7 +206,7 @@ export class StrataSettingsManager {
       ? [customId, StrataSettingsManager.providerId(url)]
       : [StrataSettingsManager.providerId(url)];
     for (const id of ids) {
-      const credential = readStoredCredential(id) as ApiKeyCredential | undefined;
+      const credential = readCredential(id) as ApiKeyCredential | undefined;
       if (credential?.key) return resolveKey(credential.key, credential.env);
     }
     return process.env.STRATA_API_KEY || modelsJsonKey(url) || API_KEY_PLACEHOLDER;
@@ -267,7 +274,6 @@ export class StrataSettingsManager {
       ...(typeof current === "object" && current !== null ? (current as object) : {}),
       [key]: value,
     }));
-    await this.settingsManager.reload();
   }
 
   /** Persist the whole `strataSettings.servers` list. */
@@ -281,14 +287,26 @@ export class StrataSettingsManager {
     await this.setServers(servers.map((server) => (server.url === url ? { ...server, overrides } : server)));
   }
 
-  /** Make a Strata model Pi's default model (Pi's own settings file). */
-  setDefaultModel(provider: string, modelId: string): void {
-    this.settingsManager.setDefaultModelAndProvider(provider, modelId);
+  /**
+   * Make a Strata model the default one.
+   *
+   * Pi keeps `defaultProvider`/`defaultModel` in the settings file this
+   * extension writes anyway. oh-my-pi keeps its model roles elsewhere and
+   * exposes no way in, so it is not offered there.
+   */
+  async setDefaultModel(provider: string, modelId: string): Promise<boolean> {
+    if (!supportsDefaultModelSetting) return false;
+    const store = (await this.hasProjectSettings()) ? this.projectStore : this.globalStore;
+    await store.updateKey("defaultProvider", () => provider);
+    await store.updateKey("defaultModel", () => modelId);
+    return true;
   }
 
-  /** Pi's thinking-level setting, used when injecting `reasoning_budget_tokens`. */
-  getThinkingLevel(): string | undefined {
-    return this.settingsManager.getDefaultThinkingLevel();
+  /** The configured default thinking level, if any. */
+  async getThinkingLevel(): Promise<string | undefined> {
+    const settings = await this.merged();
+    const level = settings.defaultThinkingLevel;
+    return typeof level === "string" ? level : undefined;
   }
 }
 
@@ -305,7 +323,7 @@ function modelsJsonKey(url: string): string | undefined {
     providers?: Record<string, { baseUrl?: string; apiKey?: string; env?: Record<string, string> }>;
   };
   try {
-    file = JSON.parse(readFileSync(join(getAgentDir(), "models.json"), "utf-8")) as typeof file;
+    file = { providers: modelsJsonProviders() } as typeof file;
   } catch {
     return undefined;
   }

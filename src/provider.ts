@@ -130,6 +130,17 @@ function strataAuth(server: StrataServer, apiKeyFallback: (url: string) => strin
 }
 
 /**
+ * The model list as a legacy `ProviderModelConfig` (oh-my-pi's shape).
+ *
+ * The host names the provider and the protocol itself, so `provider`, `baseUrl`
+ * and `api` are dropped from each entry rather than passed as unknown keys.
+ */
+export function toLegacyModelConfig(model: StrataPiModel): Omit<StrataPiModel, "provider" | "baseUrl" | "api"> {
+  const { provider: _provider, baseUrl: _baseUrl, api: _api, ...rest } = model;
+  return rest;
+}
+
+/**
  * A Strata server as a native Pi provider.
  *
  * Native (rather than a provider *config*) because only this shape can ask for

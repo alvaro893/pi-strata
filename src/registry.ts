@@ -1,7 +1,9 @@
 import type { ApiKeyCredential } from "@earendil-works/pi-ai";
+import { readCredential } from "./host.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { readStoredCredential } from "@earendil-works/pi-coding-agent";
-import { createStrataProvider, credentialUrl } from "./provider.ts";
+import { supportsNativeProviders } from "./host.ts";
+import { API_TYPE } from "./constants.ts";
+import { createStrataProvider, credentialUrl, toLegacyModelConfig } from "./provider.ts";
 import { StrataSettingsManager } from "./settings.ts";
 import { type StrataModel, StrataServer } from "./server.ts";
 import type { StrataServerConfig } from "./types.ts";
@@ -89,7 +91,7 @@ export class StrataRegistry {
         // What `/login` stored is a source of truth the configuration may not
         // know about: it holds both the address and the key. Reading it here is
         // what lets a logged-in server be up to date in a non-interactive run.
-        const credential = readStoredCredential(server.providerId) as ApiKeyCredential | undefined;
+        const credential = readCredential(server.providerId) as ApiKeyCredential | undefined;
         const url = credentialUrl(credential) ?? server.config.url;
         if (url) server.useUrl(url);
         server.useApiKey(
@@ -119,15 +121,33 @@ export class StrataRegistry {
     return warnings;
   }
 
-  /** Register one server as a native Pi provider. */
+  /**
+   * Register one server with the host.
+   *
+   * Pi gets a native `Provider`, which is what lets `/login` ask for the URL
+   * and the key. oh-my-pi's API only takes `(name, config)`, so there the model
+   * list and the key are fixed at registration time and refreshed by
+   * registering again (see `update`, called after anything that changes them).
+   */
   register(pi: ExtensionAPI, server: StrataServer, warnings: string[] = []): void {
     if (server.probeError?.kind === "unauthorized" && server.config.url)
       warnings.push(
         `${server.url} refused the API key (or has none): ` +
-          `run /login, choose ${server.providerName}, and enter the key it expects`,
+          `run /strata connect to enter the URL and the key it expects`,
       );
 
-    pi.registerProvider(createStrataProvider(server, (url) => this.settings.resolveApiKey(url)));
+    if (supportsNativeProviders) {
+      pi.registerProvider(createStrataProvider(server, (url) => this.settings.resolveApiKey(url)));
+    } else {
+      const url = server.url;
+      pi.registerProvider(server.providerId, {
+        name: server.providerName,
+        baseUrl: server.client.apiBaseUrl,
+        api: API_TYPE,
+        apiKey: this.settings.resolveApiKey(url, server.config.id),
+        models: server.piModels().map(toLegacyModelConfig),
+      });
+    }
     this.registered.add(server.providerId);
   }
 
