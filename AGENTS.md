@@ -112,7 +112,7 @@ Measured, not assumed (omp 18.8.9, Pi 1.1.0 and 1.2.0, pi2dsh 0.26.0 on dsh
 ## Strata facts that shaped the code
 
 - `POST /load` does not answer until the model is in memory: **about 95 s** for a
-  35 GB IQ4_XS. `/unload` takes seconds to tens of seconds. Both were a 5 s
+  35 GB IQ4_XS pack. `/unload` takes seconds to tens of seconds. Both were a 5 s
   timeout once, and both failed.
 - `/load`, `/unload` and `/config` answer only for "Strata's own page or a client
   that is no browser": `Content-Type: application/json` and no foreign `Origin`.

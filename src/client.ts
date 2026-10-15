@@ -39,7 +39,7 @@ export function normalizeRoot(url: string): string {
   let root = url.trim();
   if (!root) return "";
 
-  // `192.168.0.62:8081` and `localhost:8080` are not valid URLs: fetch cannot
+  // `192.0.2.10:8081` and `localhost:8080` are not valid URLs: fetch cannot
   // parse them without a scheme, so assume plain HTTP.
   if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(root)) root = `http://${root}`;
 
@@ -63,7 +63,7 @@ export function parseServerUrl(url: string, fallback = ""): string {
       throw new Error(`unsupported scheme ${parsed.protocol}`);
   } catch {
     throw new Error(
-      `'${url.trim()}' is not a server address - try something like http://192.168.0.62:8081`,
+      `'${url.trim()}' is not a server address - try something like http://192.0.2.10:8081`,
     );
   }
   return root;

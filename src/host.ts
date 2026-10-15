@@ -79,7 +79,7 @@ export const supportsDefaultModelSetting = hostName === "pi";
  * resolves `--model provider/model` itself and stops at a colon in the provider
  * id (measured: `strata=eqtest` and `strata.dot-test` resolve,
  * `strata:colontest` does not), so there the scheme and the port separator are
- * normalised away: `strata-server=192.168.0.62-8081`. dsh goes one step
+ * normalised away: `strata-server=192.0.2.10-8081`. dsh goes one step
  * further and needs an id that can address one of its own credential records;
  * see {@link credentialSafeAddress}. The id is only ever compared with itself
  * inside one agent directory, so it never has to match across hosts.

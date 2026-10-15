@@ -58,11 +58,11 @@ Then connect it to your server:
 ```
 
 ```text
-Strata server URL: 192.168.0.62:8081        (a bare host:port is fine)
+Strata server URL: 192.0.2.10:8081          (a bare host:port is fine)
 API key (leave empty for a server started without one): ****
 ```
 
-The address may be written `192.168.0.62:8081`, `http://192.168.0.62:8081`, or
+The address may be written `192.0.2.10:8081`, `http://192.0.2.10:8081`, or
 with a pasted `/v1` on the end; plain HTTP is assumed without a scheme.
 
 The extension checks the pair against the server before storing it, and keeps
@@ -133,8 +133,8 @@ own port and list them all:
 {
   "strataSettings": {
     "servers": [
-      { "url": "http://127.0.0.1:8080", "name": "iq4_xs", "startCommand": "nohup ./run-iq4.sh >/tmp/strata-iq4.log 2>&1 &" },
-      { "url": "http://127.0.0.1:8081", "name": "iq2_xs", "startCommand": "nohup ./run-iq2.sh >/tmp/strata-iq2.log 2>&1 &" }
+      { "url": "http://127.0.0.1:8080", "name": "iq4_xs", "startCommand": "nohup ./run-iq4_xs.sh >/tmp/strata-iq4_xs.log 2>&1 &" },
+      { "url": "http://127.0.0.1:8081", "name": "iq2_xs", "startCommand": "nohup ./run-iq2_xs.sh >/tmp/strata-iq2_xs.log 2>&1 &" }
     ]
   }
 }
@@ -324,9 +324,9 @@ npm run live:dsh    # a real DeepSeek Harness: temp DSH_HOME, pi2dsh, this check
 ```
 
 `test/live.mjs` is read-only unless `LOAD=1`, in which case it loads and
-unloads the model once; `RELOAD=1` loads it again at the end (about 2 minutes
-to give back and take 35 GB: measured at 10-20 s to unload and about 95 s to load
-on a V100 with an IQ4_XS model).
+unloads the model once; `RELOAD=1` loads it again at the end. Allow a couple of
+minutes: measured at 10-20 s to unload and about 95 s to load a 35 GB IQ4_XS
+pack.
 
 `test/live-dsh.mjs` needs node 22.19+, `pnpm` (dsh installs plugins with it) and
 network. It writes nothing outside a temp `DSH_HOME`, and ends by checking that
@@ -345,7 +345,7 @@ tail -F ~/.omp/logs/omp.$(date +%F).*.log | grep -i "extension"
 against a real server:
 
 ```bash
-node test/proxy.mjs http://192.168.1.10:8081 8099 /tmp/proxy.log &
+node test/proxy.mjs http://192.0.2.10:8081 8099 /tmp/proxy.log &
 STRATA_SERVER_URL=http://127.0.0.1:8099 pi -e ./src/index.ts --thinking high \
   --model 'strata-server=http://127.0.0.1:8099/<model>' "hi"
 ```
