@@ -6,7 +6,8 @@ three hosts - Pi, [oh-my-pi](https://github.com/can1357/oh-my-pi) (`omp`), and
 DeepSeek Harness (`dsh`) through
 [pi2dsh](https://github.com/weijiafu14/pi2dsh) - each one run and checked.
 
-This branch (`dsh-compat`) carries the dsh work; `main` does not.
+All three are on `main`, which is the releasable branch: nothing waits on a
+side branch, and a change goes in by merging it there.
 
 ## Commands
 
