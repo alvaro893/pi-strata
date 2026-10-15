@@ -8,6 +8,8 @@ import { createJiti } from "jiti";
 import { startFakeStrata } from "./fake-strata.mjs";
 
 const jiti = createJiti(import.meta.url, { tsconfigPath: join(process.cwd(), "tsconfig.json") });
+// Captured before the test chdirs into a temp directory.
+const repoRoot = process.cwd();
 const { StrataSettingsManager } = await jiti.import("../src/settings.ts");
 const { StrataRegistry } = await jiti.import("../src/registry.ts");
 const createExtension = (await jiti.import("../src/index.ts")).default;
@@ -21,33 +23,38 @@ const createExtension = (await jiti.import("../src/index.ts")).default;
  * - "both" (default): Pi, which takes a native provider or (name, config)
  * - "legacy": a host that ignores a single-argument registration, the way a
  *   bridge that only implements (name, config) would
- * - "one-provider": a host that refuses a second provider (DeepSeek Harness)
+ * - "one-provider": a host that refuses a second provider in one session (omp
+ *   does, with DUPLICATE_PROVIDER; dsh does not - measured on 0.2.0-rc.2)
  */
 function fakePi({ accepts = "both" } = {}) {
   const providers = new Map();
   const handlers = new Map();
   const commands = new Map();
   const refused = [];
+  /** Every single-argument (`Provider` object) registration the host was given. */
+  const native = [];
   return {
     providers,
     handlers,
     commands,
     refused,
+    native,
     registerProvider(idOrProvider, config) {
-      const native = typeof idOrProvider !== "string";
-      if (native && accepts === "legacy") {
+      const nativeCall = typeof idOrProvider !== "string";
+      if (nativeCall) native.push(idOrProvider.id);
+      if (nativeCall && accepts === "legacy") {
         // Accepted and dropped: this is the silent case the extension has to
         // notice by looking at the registry afterwards.
         refused.push(idOrProvider.id);
         return;
       }
-      if (accepts === "one-provider" && providers.size > 0 && !providers.has(native ? idOrProvider.id : idOrProvider)) {
+      if (accepts === "one-provider" && providers.size > 0 && !providers.has(nativeCall ? idOrProvider.id : idOrProvider)) {
         throw new Error("DUPLICATE_PROVIDER: one provider per context");
       }
       // Native provider objects arrive with one argument; the legacy
       // (id, config) pair with two.
-      const id = native ? idOrProvider.id : idOrProvider;
-      providers.set(id, native ? idOrProvider : config);
+      const id = nativeCall ? idOrProvider.id : idOrProvider;
+      providers.set(id, nativeCall ? idOrProvider : config);
       hostProviders.add(id); // a real host registry would report this
     },
     unregisterProvider(id) {
@@ -445,7 +452,7 @@ try {
 }
 
 // ------------------------------------------- hosts that are not Pi or oh-my-pi
-// A Pi-ABI bridge (pi2dsh on DeepSeek Harness is the case in point) is free to
+// A bridge that does not say what it is (see the pi2dsh case below) is free to
 // accept a registration and drop it. Registration alone is never proof: the
 // extension asks the model registry afterwards and switches form if needed.
 //
@@ -484,6 +491,59 @@ try {
     assert.equal(bridgeCtx.notices.length, 0, "nothing is reported as broken");
     assert.equal(await bridgeRegistry.ensureRegistered(bridgePi, bridgeCtx), false, "and the choice sticks");
 
+    // --- a bridge that says what it is: pi2dsh, whose shim exports
+    // VERSION = "pi2dsh-compat". Measured on pi2dsh 0.26.0 / dsh 0.2.0-rc.2:
+    // it takes a native `Provider`, mounts it as a DSH llm route, and only when
+    // a turn runs finds that the transport is missing - so the extension must
+    // never offer one; and of the key it keeps only an environment reference,
+    // so the key has to travel as `$STRATA_API_KEY`.
+    const hostShim = join(dir, "bridge-host.mjs");
+    await writeFile(
+      hostShim,
+      `export * from ${JSON.stringify(import.meta.resolve("@earendil-works/pi-coding-agent"))};\n` +
+        `export const VERSION = "pi2dsh-compat";\n`,
+    );
+    const dshJiti = createJiti(import.meta.url, {
+      tsconfigPath: join(repoRoot, "tsconfig.json"),
+      alias: { "@earendil-works/pi-coding-agent": hostShim },
+      // The modules under the real host are already loaded; without switching
+      // the cache off this instance would be handed those back and see Pi.
+      moduleCache: false,
+    });
+    const dshHost = await dshJiti.import("../src/host.ts");
+    assert.equal(dshHost.hostName, "dsh", "the bridge's own VERSION names the host");
+    assert.equal(dshHost.supportsNativeProviders, false, "and no native provider is offered to it");
+
+    const dshRegistryModule = await dshJiti.import("../src/registry.ts");
+    const dshSettingsModule = await dshJiti.import("../src/settings.ts");
+    const dshServer = await startFakeStrata({ loaded: true, model: "dsh-model", aliases: [] });
+    process.env.STRATA_SERVER_URL = dshServer.url;
+    process.env.STRATA_API_KEY = "dsh-key";
+    const dshPi = fakePi(); // a bridge that would take a native one: none is sent
+    const dshRegistry = new dshRegistryModule.StrataRegistry(
+      new dshSettingsModule.StrataSettingsManager(),
+    );
+    await dshRegistry.update(dshPi);
+
+    const dshId = dshHost.urlProviderId("strata-server", dshServer.url);
+    // dsh-credentials' KEY_SEGMENT_PATTERN: anything else and the host answers
+    // that this provider id cannot address a stored credential record.
+    assert.match(dshId, /^[a-z][a-z0-9-]*$/, "its id is a legal dsh credential-record segment");
+    assert.equal(dshPi.native.length, 0, "no native registration is even attempted");
+    assert.equal(dshRegistry.registrationMode, "legacy", "from the first registration on");
+    const dshConfig = dshPi.providers.get(dshId);
+    assert.ok(dshConfig, "the plain (name, config) form is used");
+    assert.equal(dshConfig.apiKey, "$STRATA_API_KEY", "the key travels as an environment reference");
+    assert.equal(dshConfig.baseUrl, `${dshServer.url}/v1`, "at the server's own address");
+
+    // With nothing in the environment, no reference is claimed: a reference to
+    // an unset variable is a hard failure on dsh, while the literal leaves the
+    // host free to use a key stored in its own Models page.
+    delete process.env.STRATA_API_KEY;
+    await dshRegistry.update(dshPi);
+    assert.equal(dshPi.providers.get(dshId).apiKey, "strata", "so the key itself is passed");
+    await dshServer.close();
+
     // --- a host that mounts one provider per session
     const first = await startFakeStrata({ loaded: true, model: "first-model", aliases: [] });
     const second = await startFakeStrata({ loaded: true, model: "second-model", aliases: [] });
@@ -507,6 +567,7 @@ try {
   } finally {
     delete process.env.PI_CODING_AGENT_DIR;
     delete process.env.STRATA_SERVER_URL;
+    delete process.env.STRATA_API_KEY;
     process.chdir(tmpdir());
     await rm(dir, { recursive: true, force: true });
   }

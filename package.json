@@ -1,7 +1,7 @@
 {
   "name": "pi-strata",
   "version": "0.4.0",
-  "description": "Pi and oh-my-pi extension for Strata: browse the model a Strata server serves, load it, unload it, and see its state.",
+  "description": "Pi, oh-my-pi and DeepSeek Harness extension for Strata: browse the model a Strata server serves, load it, unload it, and see its state.",
   "keywords": [
     "pi",
     "pi-package",
@@ -9,7 +9,9 @@
     "strata",
     "llama-cpp",
     "local-llm",
-    "gguf"
+    "gguf",
+    "deepseek-harness",
+    "dsh-plugin"
   ],
   "author": "alvaro893",
   "license": "MIT",
@@ -38,7 +40,8 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "node test/smoke.mjs",
-    "live": "node test/live.mjs"
+    "live": "node test/live.mjs",
+    "live:dsh": "node test/live-dsh.mjs"
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",

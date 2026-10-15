@@ -1,7 +1,7 @@
 import type { ApiKeyCredential } from "@earendil-works/pi-ai";
 import { readCredential } from "./host.ts";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { supportsNativeProviders } from "./host.ts";
+import { supportsNativeProviders, hostName, registrationApiKey } from "./host.ts";
 import { API_TYPE } from "./constants.ts";
 import { createStrataProvider, credentialUrl, toLegacyModelConfig } from "./provider.ts";
 import { StrataSettingsManager } from "./settings.ts";
@@ -19,14 +19,14 @@ export interface LocatedModel {
  *
  * `native` is Pi's single-`Provider` registration, which is what lets `/login`
  * ask for a URL and a key. `legacy` is `(name, config)`, the only form
- * oh-my-pi accepts and the one any other bridge is most likely to implement,
- * because the model list and the key are plain data.
+ * oh-my-pi accepts and the one a Pi-ABI bridge has to be given, because on a
+ * bridge only that form reaches the host's own transport - see
+ * `supportsNativeProviders` for what a native registration costs on dsh.
  *
- * Which one works is decided statically from the host when it is known, and
- * corrected at runtime by looking at what actually ended up in the model
- * registry - see {@link StrataRegistry.ensureRegistered}. That is what keeps a
- * host we cannot test (a Pi-ABI bridge such as pi2dsh on DeepSeek Harness)
- * from failing silently.
+ * Which one works is decided from the host when it is known, and corrected at
+ * runtime by looking at what actually ended up in the model registry - see
+ * {@link StrataRegistry.ensureRegistered}. That backstop is what keeps a bridge
+ * that imitates Pi's exports closely enough to be noticed from failing silently.
  */
 export type RegistrationMode = "native" | "legacy";
 
@@ -46,7 +46,7 @@ export class StrataRegistry {
   /** Corrected by observation; starts from what the host says it is. */
   private mode: RegistrationMode = supportsNativeProviders ? "native" : "legacy";
 
-  /** Set once a host refuses a second provider (DeepSeek Harness allows one). */
+  /** Set once a host refuses a second provider in one session. */
   private singleProviderHost = false;
 
   /** Servers this host cannot take, because it mounts one provider per session. */
@@ -156,9 +156,10 @@ export class StrataRegistry {
   /**
    * Register every server with the host, in the current mode.
    *
-   * A host that refuses a second provider (DeepSeek Harness mounts one per
-   * context) is detected here: the first server keeps its provider and the rest
-   * are reported instead of pretending they work.
+   * A host that refuses a second provider is detected here: the first server
+   * keeps its provider and the rest are reported instead of pretending they
+   * work. (dsh is not such a host - measured on 0.2.0-rc.2, it takes one
+   * registration per package slot and re-registrations merge.)
    */
   registerAll(pi: ExtensionAPI, warnings: string[] = []): void {
     for (const server of this.servers.values()) {
@@ -176,15 +177,21 @@ export class StrataRegistry {
    * Register one server with the host.
    *
    * Pi gets a native `Provider`, which is what lets `/login` ask for the URL
-   * and the key. oh-my-pi and other Pi-ABI bridges get `(name, config)`, where
-   * the model list and the key are fixed at registration time and refreshed by
+   * and the key. oh-my-pi and a Pi-ABI bridge get `(name, config)`, where the
+   * model list and the key are fixed at registration time and refreshed by
    * registering again (see `update`, called after anything that changes them).
    */
   register(pi: ExtensionAPI, server: StrataServer, warnings: string[] = []): void {
     if (server.probeError?.kind === "unauthorized" && server.config.url)
       warnings.push(
         `${server.url} refused the API key (or has none): ` +
-          `run /strata connect to enter the URL and the key it expects`,
+          `run /strata connect to enter the URL and the key it expects` +
+          // On dsh the key this extension signs its own calls with is not the
+          // key the host signs a turn with; only the environment reaches both.
+          (hostName === "dsh"
+            ? "\nOn dsh a turn is signed by STRATA_API_KEY, or by a key stored in dsh's own" +
+              " Models page under this provider's id - export the variable too"
+            : ""),
       );
 
     try {
@@ -196,7 +203,7 @@ export class StrataRegistry {
           name: server.providerName,
           baseUrl: server.client.apiBaseUrl,
           api: API_TYPE,
-          apiKey: this.settings.resolveApiKey(url, server.config.id),
+          apiKey: registrationApiKey(this.settings.resolveApiKey(url, server.config.id)),
           models: server.piModels().map(toLegacyModelConfig),
         });
       }
@@ -234,6 +241,10 @@ export class StrataRegistry {
    * provider missing from the model registry, which is what this looks for: it
    * switches to the plain `(name, config)` form and registers again. Called on
    * `session_start`, when a registry exists to ask.
+   *
+   * It cannot see a host that takes the registration, shows the model and then
+   * fails to carry a request - which is exactly what a native `Provider` does on
+   * dsh - so that case is decided up front from the host instead.
    *
    * @returns true when something was re-registered
    */

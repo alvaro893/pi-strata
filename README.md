@@ -39,14 +39,16 @@ omp install github:alvaro893/pi-strata            # from GitHub
 
 # DeepSeek Harness, through the pi2dsh compatibility engine
 dsh plugin --profile web add pi2dsh
-dsh plugin --profile web add <this package>
+dsh plugin --profile web add github:alvaro893/pi-strata   # or a checkout path
+dsh plugin --profile web add /path/to/pi-strata           # (this is what was measured)
 ```
 
 The host clones the repository and loads `src/index.ts` directly (it is
 TypeScript, there is no build step). `pi list` / `omp plugin list` show it, and
 `pi update --extensions` reconciles it after a `git pull` or a new tag.
 
-Requires Pi 1.1.0 or newer: verified against Pi 1.1.0 and 1.2.0 with Strata 0.1.43.1.
+Requires Pi 1.1.0 or newer: verified against Pi 1.1.0 and 1.2.0 with Strata
+0.1.43.1, oh-my-pi 18.8.9, and pi2dsh 0.26.0 on DeepSeek Harness 0.2.0-rc.2.
 
 Then connect it to your server:
 
@@ -181,7 +183,10 @@ one entry at its address.
 
 `reasoningBudgets` is off by default: Strata's `reasoning_effort` levels already
 set the thinking length. When you set it, the matching value is sent as
-`reasoning_budget_tokens` alongside the effort level.
+`reasoning_budget_tokens` alongside the effort level. On dsh it is not sent at
+all: the host carries the request, and `before_provider_request` does not fire
+for a route the host owns (measured: `reasoning_effort` present,
+`reasoning_budget_tokens` absent).
 
 `maxTokens` defaults to the smaller of the context window and 32768. Strata
 shortens `max_tokens` itself when the prompt would not fit (`fit_max_tokens`),
@@ -191,10 +196,11 @@ so offering the whole window for one answer only invites runaways.
 
 |  | Pi | oh-my-pi | DeepSeek Harness (via pi2dsh) |
 | --- | --- | --- | --- |
-| provider registration | a native `Provider`, or `(name, config)` | `(name, config)` | a native `Provider` or `(name, config)`, resolved by the bridge |
-| interactive setup | `/login` or `/strata connect` | `/strata connect` | `/strata connect` |
-| config dir | `.pi` | `.omp` | Pi's, served from the bridge |
-| url-based provider id | `strata-server=http://host:8081` | `strata-server=host-8081` | as Pi |
+| provider registration | a native `Provider`, or `(name, config)` | `(name, config)` | `(name, config)` - and only that, see below |
+| interactive setup | `/login` or `/strata connect` | `/strata connect` | `/strata connect` (for this extension's own calls) |
+| config dir | `.pi` | `.omp` | `$DSH_HOME/pi2dsh/agent` |
+| url-based provider id | `strata-server=http://host:8081` | `strata-server=host-8081` | `strata-server-host-8081` |
+| who carries the request | Pi, with our `compat` flags | Pi, with our `compat` flags | dsh's own `llm-pi-ai` adapter, with the same flags translated to it |
 | models refresh | Pi re-reads them itself | the extension re-registers after a load, unload or connect | the same |
 
 oh-my-pi's extension API is close to Pi's - `pi.on`, `registerCommand`,
@@ -204,42 +210,71 @@ no native provider, has no `/login` hook, and resolves `--model` itself, which i
 why provider ids lose their colons there. Those differences are found in
 `src/host.ts`.
 
-A Pi-ABI bridge is not detectable from an export, so registration is not
-conditional on knowing the host: the extension registers, then asks the model
-registry what it actually holds on `session_start`. If nothing of ours is in it,
-it registers again in the plain `(name, config)` form; if that fails too, it says
-so once instead of leaving the user with a silently empty model list. A host that
-mounts a single provider per session (dsh does) is detected the same way, and the
-servers it cannot take are named.
+A bridge that does not say what it is stays undetectable from an export, so
+registration is never only conditional on knowing the host: the extension
+registers, then asks the model registry what it actually holds on
+`session_start`. If nothing of ours is in it, it registers again in the plain
+`(name, config)` form; if that fails too, it says so once instead of leaving the
+user with a silently empty model list. A host that refuses a second provider in
+one session is detected the same way, and the servers it cannot take are named.
 
 ### DeepSeek Harness
 
 `dsh` is not a Pi fork: it is DeepSeek's own Cordis-based harness with a
 different plugin architecture. Pi extensions reach it through a compatibility
 engine, and [pi2dsh](https://github.com/weijiafu14/pi2dsh) is the one that
-implements the surface this extension needs - including a `registerProvider`
-that turns a transport-owning provider into a real DSH route carried by the
-package's own HTTP client.
+implements the surface this extension needs.
 
 ```bash
 dsh plugin --profile web add pi2dsh
 dsh plugin --profile web add <this package>
-# then restart dsh
+# then restart dsh - plugins mount at startup
 ```
 
-**Not yet verified there.** The adaptive registration above is covered by tests
-against simulated hosts (one that drops the native form, one that mounts a
-single provider), but it has not been run against a real `dsh` installation -
-neither has `/strata connect` on that host. Known limits when it is:
+**Verified on pi2dsh 0.26.0 with dsh 0.2.0-rc.2** (`npm run live:dsh` builds a
+temp `DSH_HOME`, installs the engine and this checkout, and answers one
+`dsh headless` task through a Strata-shaped server). What that measurement
+changed:
 
-- `dsh` mounts one provider per session, so only the first configured server is
-  registered; the rest are reported.
-- pi2dsh does not read `models.json` itself, so a key has to come from
-  `/strata connect` (which writes `auth.json`), `STRATA_API_KEY`, or a `models.json`
-  entry, which this extension reads for itself.
-- pi2dsh pins its Pi extension semantics to 0.84.1 while this extension is built
-  against Pi 1.1/1.2; the native `/login` prompt is the part most likely to
-  differ, which is why `/strata connect` is the way in.
+- **`(name, config)`, never a native `Provider`.** The bridge *accepts* one and
+  announces `registered as a native DSH llm route`, which looks like success and
+  is not: it reads a `Provider` as "this package owns the transport", while the
+  `pi-ai/compat` it hands us is its own shim, whose transport needs an active
+  Agent runtime - which a route invocation is not. The model appears, is
+  selectable, and the first turn dies with `pi2dsh: pi-ai streamSimple() needs a
+  DSH llm service`. The `(name, config)` form is translated into dsh's official
+  `llm-pi-ai` profile and dsh carries the request, `compat` and reasoning levels
+  included.
+- **The provider id is folded to `strata-server-127-0-0-1-8081`.** dsh stores a
+  route's key under a record id matching `/^[a-z][a-z0-9-]*$/`; with a URL in the
+  id it answers `provider id "..." cannot address a stored credential record`
+  and the environment is the only way left to authenticate.
+- **A turn's key comes from the host, not from `auth.json`.** The bridge keeps
+  only an environment reference out of the key we pass, so when
+  `STRATA_API_KEY` is set it travels as `$STRATA_API_KEY` and dsh resolves it per
+  request; when it is not, dsh uses a key stored in its own Models page under
+  that provider id. A literal key is dropped - measured: every turn failed `No
+  API key for provider` until the key travelled one of those two ways.
+  `/strata connect` still matters, for this extension's own calls (probe, status,
+  load, unload), which do read `auth.json`.
+- **dsh keeps the result as configuration.** The translation is written into the
+  profile's `cordis.patch.yml` as an `llm-pi-ai` provider entry - `api`,
+  `baseURL`, `apiKeyEnv`, and each model with its context window, modalities,
+  `compat` and reasoning levels. It outlives the session, so a server that moves
+  or disappears leaves its entry behind there.
+- **dsh is not a one-provider host.** It takes one registration per package slot
+  and merges a re-registration; this extension is mounted twice (an anchor and
+  the package) and both registrations land.
+- **`reasoningBudgets` do not apply.** `before_provider_request` fires only for a
+  transport the package owns, and here dsh owns it: the request that was logged
+  carried `reasoning_effort: "medium"` and no `reasoning_budget_tokens`. The
+  thinking *level* travels (the `reasoningEfforts` map is part of the translated
+  profile); the per-level token budget does not.
+
+Not verified: the interactive `/strata` browser on dsh's web or TUI surfaces -
+only `dsh headless` was run, where there is nothing to draw. pi2dsh pins its Pi
+semantics to 0.84.1 while this extension is built against Pi 1.1/1.2; nothing in
+what this extension uses noticed the difference.
 
 ## How it talks to Strata
 
@@ -285,12 +320,18 @@ npm install   # typescript + @types/node
 npx tsc --noEmit    # types against the installed Pi packages
 npm test            # smoke test against a stand-in Strata server (no real server needed)
 STRATA_SERVER_URL=http://host:port STRATA_API_KEY=... LOAD=1 node test/live.mjs
+npm run live:dsh    # a real DeepSeek Harness: temp DSH_HOME, pi2dsh, this checkout
 ```
 
 `test/live.mjs` is read-only unless `LOAD=1`, in which case it loads and
 unloads the model once; `RELOAD=1` loads it again at the end (about 2 minutes
 to give back and take 35 GB: measured at 10-20 s to unload and about 95 s to load
 on a V100 with an IQ4_XS model).
+
+`test/live-dsh.mjs` needs node 22.19+, `pnpm` (dsh installs plugins with it) and
+network. It writes nothing outside a temp `DSH_HOME`, and ends by checking that
+one `dsh headless` task was answered by the Strata server. `DSH_VERSION` and
+`PI2DSH_VERSION` pin what it installs.
 
 To check oh-my-pi without a session, note that it logs extension load failures
 rather than showing them:

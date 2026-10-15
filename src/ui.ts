@@ -4,7 +4,7 @@ import type {
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { parseServerUrl, StrataClient } from "./client.ts";
-import { supportsLoginDialog, writeCredential } from "./host.ts";
+import { hostName, supportsLoginDialog, writeCredential } from "./host.ts";
 import { ICONS, type StrataModel, type StrataServer } from "./server.ts";
 import type { StrataRegistry } from "./registry.ts";
 import { StrataSettingsManager } from "./settings.ts";
@@ -307,7 +307,14 @@ export async function connectServer(
       (stored
         ? "The URL and key are stored for the next session."
         : "The key could not be written to auth.json - it may not survive a restart.") +
-      (supportsLoginDialog ? "\nTip: /login does the same thing on this host." : ""),
+      (supportsLoginDialog ? "\nTip: /login does the same thing on this host." : "") +
+      // What is stored here signs this extension's own calls. On dsh the host
+      // signs the turn itself, and only the environment (or a key saved in
+      // dsh's Models page) reaches it - measured: a turn fails with
+      // "No API key for provider" however correct auth.json is.
+      (hostName === "dsh" && !process.env.STRATA_API_KEY
+        ? "\ndsh signs its own requests, so export STRATA_API_KEY as well or the model will not answer."
+        : ""),
     "info",
   );
 }

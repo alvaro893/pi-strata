@@ -25,6 +25,7 @@ export function startFakeStrata(options = {}) {
     autoLoad = false,
     loadDelayMs = 300,
     keys = DEFAULT_KEYS.map((key) => ({ ...key })),
+    reply = "ok",
   } = options;
 
   const state = {
@@ -35,6 +36,8 @@ export function startFakeStrata(options = {}) {
     inFlight: 0,
     config: Object.fromEntries(keys.map((key) => [key.key, key.value])),
     startedAt: Date.now(),
+    /** Body of the last `/v1/chat/completions`, for a test to assert on. */
+    lastChat: undefined,
   };
 
   const server = http.createServer((req, res) => {
@@ -186,7 +189,29 @@ export function startFakeStrata(options = {}) {
       if (path === "/v1/chat/completions") {
         state.inFlight++;
         state.inFlight--;
-        return send(200, { id: 1, object: "chat.completion", model: state.model, choices: [{ message: { role: "assistant", content: "ok" } }] });
+        const request = JSON.parse(body || "{}");
+        state.lastChat = request;
+        // A host that streams (every one here does) needs real SSE: a JSON body
+        // in answer to `stream: true` ends the stream with no finish_reason.
+        if (request.stream) {
+          res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" });
+          const chunk = (delta, finishReason) =>
+            res.write(
+              `data: ${JSON.stringify({
+                id: "chatcmpl-fake",
+                object: "chat.completion.chunk",
+                created: 0,
+                model: state.model,
+                choices: [{ index: 0, delta, finish_reason: finishReason ?? null }],
+              })}\n\n`,
+            );
+          chunk({ role: "assistant" });
+          chunk({ content: reply });
+          chunk({}, "stop");
+          res.write("data: [DONE]\n\n");
+          return res.end();
+        }
+        return send(200, { id: 1, object: "chat.completion", model: state.model, choices: [{ message: { role: "assistant", content: reply } }] });
       }
 
       return send(404, { error: { message: `no endpoint ${path}` } });

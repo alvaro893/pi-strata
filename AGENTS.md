@@ -3,10 +3,10 @@
 A Pi extension that connects to a [Strata](https://github.com/Niko1221/Strata)
 server: model browser, load/unload, live status, run-config editor. One package,
 three hosts - Pi, [oh-my-pi](https://github.com/can1357/oh-my-pi) (`omp`), and
-(prepared, unverified) DeepSeek Harness through
-[pi2dsh](https://github.com/weijiafu14/pi2dsh).
+DeepSeek Harness (`dsh`) through
+[pi2dsh](https://github.com/weijiafu14/pi2dsh) - each one run and checked.
 
-This branch (`dsh-compat`) carries the dsh preparation; `main` does not.
+This branch (`dsh-compat`) carries the dsh work; `main` does not.
 
 ## Commands
 
@@ -14,6 +14,7 @@ This branch (`dsh-compat`) carries the dsh preparation; `main` does not.
 npm run typecheck   # tsc --noEmit, strict, noUnusedLocals-clean
 npm test            # smoke test: the real modules against a stand-in server
 npm run live        # read-only probe of a real Strata server (env below)
+npm run live:dsh    # a real DeepSeek Harness + pi2dsh running this package
 node test/proxy.mjs <upstream-url> <port> <logfile>   # logging reverse proxy
 ```
 
@@ -62,20 +63,27 @@ Nothing else may branch on the host.
 
 |  | Pi | oh-my-pi | dsh (via pi2dsh) |
 | --- | --- | --- | --- |
-| registration | native `Provider`, or `(name, config)` | `(name, config)` only | both, resolved by the bridge |
-| interactive setup | `/login` or `/strata connect` | `/strata connect` | `/strata connect` |
-| config dir | `.pi` | `.omp` | Pi's |
-| url-based provider id | `strata-server=http://host:8081` | `strata-server=host-8081` | as Pi |
-| verified here | yes | yes | **no** |
+| registration | native `Provider`, or `(name, config)` | `(name, config)` only | `(name, config)` only |
+| interactive setup | `/login` or `/strata connect` | `/strata connect` | `/strata connect` (this extension's calls only) |
+| config dir | `.pi` | `.omp` | `$DSH_HOME/pi2dsh/agent` |
+| url-based provider id | `strata-server=http://host:8081` | `strata-server=host-8081` | `strata-server-host-8081` |
+| verified here | yes | yes | yes (`dsh headless`, see `npm run live:dsh`) |
 
-A Pi-ABI bridge cannot be detected from an export, so registration is *checked*
-rather than assumed: at `session_start`, `StrataRegistry.ensureRegistered` looks
-at what the host's model registry actually holds. Nothing of ours → register
-again as `(name, config)`; still nothing → say so once. A host that mounts one
-provider per session (dsh does) is found the same way and its skipped servers are
-named. **Do not replace this with a host-name check.**
+Registration is *checked* rather than assumed: at `session_start`,
+`StrataRegistry.ensureRegistered` looks at what the host's model registry
+actually holds. Nothing of ours → register again as `(name, config)`; still
+nothing → say so once. A host that refuses a second provider in one session is
+found the same way and its skipped servers are named. **Do not replace this with
+a host-name check.**
 
-Measured, not assumed (omp 18.8.9, Pi 1.1.0 and 1.2.0):
+The one bridge that announces itself - pi2dsh's shim exports
+`VERSION = "pi2dsh-compat"` - is taken at its word, because self-correction
+cannot reach its failure: it *accepts* a native `Provider`, the model shows up in
+the host's directory, and only the first turn fails. Seeing the host is what
+keeps a native `Provider` from ever being offered there.
+
+Measured, not assumed (omp 18.8.9, Pi 1.1.0 and 1.2.0, pi2dsh 0.26.0 on dsh
+0.2.0-rc.2):
 
 - omp's `SettingsManager` has no `reload()` (it has `reloadFromDisk`), its
   `writeValue` throws, and its settings do not live in `settings.json` - which is
@@ -86,6 +94,19 @@ Measured, not assumed (omp 18.8.9, Pi 1.1.0 and 1.2.0):
 - omp raises `DUPLICATE_PROVIDER` for a second provider in one session.
 - omp writes extension load failures to `~/.omp/logs/omp.<date>.<pid>.log`
   instead of showing them, and needs one usable model before a session starts.
+- dsh takes a native `Provider` and mounts it as a route whose transport our code
+  is then expected to carry, which the bridge's own `pi-ai/compat` cannot do
+  outside an Agent runtime: `pi2dsh: pi-ai streamSimple() needs a DSH llm
+  service`. `(name, config)` becomes dsh's own `llm-pi-ai` profile and works.
+- dsh addresses a stored credential by `/^[a-z][a-z0-9-]*$/`, so its provider id
+  is folded (`credentialSafeAddress`), and of the key it keeps only an
+  environment reference (`$STRATA_API_KEY`) - a literal is dropped and every turn
+  fails `No API key for provider`.
+- dsh writes the translated profile into the profile's `cordis.patch.yml`, so it
+  survives the session; and it declares the adapter while the extension loads,
+  which is why the first run after a change can still answer `NO_ADAPTER`.
+- dsh is not a one-provider host: it takes one registration per package slot and
+  merges re-registrations, and it mounts this package twice (anchor + package).
 
 ## Strata facts that shaped the code
 
@@ -105,8 +126,10 @@ Measured, not assumed (omp 18.8.9, Pi 1.1.0 and 1.2.0):
 - `max_context` is whatever the server was started with and changes between runs
   (seen as 131072, later 262144): always read it, never assume it.
 - A key comes from `auth.json` under the provider id, `STRATA_API_KEY`, or a
-  `models.json` provider pointed at the same address. Both hosts use
-  `{ "<id>": { "type": "api_key", "key": "...", "env": {...} } }`.
+  `models.json` provider pointed at the same address. Pi and omp use
+  `{ "<id>": { "type": "api_key", "key": "...", "env": {...} } }`; dsh signs its
+  own requests and reads its key from `STRATA_API_KEY` or from its credential
+  store (`$DSH_HOME/.credentials.yaml`, which its Models page writes).
 - Strata's prefix cache depends on the exact thinking text, so `compat` replays
   `reasoning_content` on assistant messages and sends `max_tokens` (not
   `max_completion_tokens`).
@@ -115,7 +138,15 @@ Measured, not assumed (omp 18.8.9, Pi 1.1.0 and 1.2.0):
 
 `test/fake-strata.mjs` mirrors the real server, including the own-page check and
 the empty model list while unloaded. When a real behaviour surprises you, make
-the fake match it and add the assertion to `test/smoke.mjs`.
+the fake match it and add the assertion to `test/smoke.mjs`. Two things the hosts
+forced into it: it **streams SSE** for `stream: true` (a JSON body in answer to a
+streaming request ends the stream with no `finish_reason`, which is how dsh first
+rejected it), and it records the last chat body in `state.lastChat`.
+
+`test/smoke.mjs` covers a bridge host by loading the real modules through a jiti
+alias that makes `@earendil-works/pi-coding-agent` answer like pi2dsh's shim -
+that is what asserts the dsh provider id and the `$STRATA_API_KEY` reference
+without a dsh installation.
 
 **Tests must never touch real configuration.** They point `PI_CODING_AGENT_DIR` at
 a temp dir and `chdir` into another; anything that writes settings or credentials
@@ -127,6 +158,15 @@ Against a real server:
 ```bash
 STRATA_SERVER_URL=http://host:8081 STRATA_API_KEY=... npm run live    # read-only
 LOAD=1 RELOAD=1 ... npm run live                                      # unload + load, 2 min
+npm run live:dsh     # dsh 0.2.0-rc.2 + pi2dsh 0.26.0, one headless task, ~1 min
+DSH_VERSION=... PI2DSH_VERSION=pi2dsh@0.25.2 npm run live:dsh          # pin what it installs
+```
+
+`live:dsh` needs `pnpm` on PATH (dsh installs plugins with it) and writes only
+inside a temp `DSH_HOME`. Two traps it had to step over: the Strata server runs
+in a **child process**, because `spawnSync` blocks this one and an extension that
+cannot reach `/health` declares nothing; and the first run after a change can
+answer `NO_ADAPTER` while dsh is still declaring the adapter, so it retries.
 ```
 
 `test/proxy.mjs` sits in front of a real server and logs request bodies. That is
